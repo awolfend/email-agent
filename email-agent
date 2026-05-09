@@ -22,35 +22,17 @@ ok()   { echo "${GREEN}  ✓ $1${NC}"; }
 warn() { echo "${YELLOW}  ⚠ $1${NC}"; }
 fail() { echo "${RED}  ✗ $1${NC}"; }
 info() { echo "${BLUE}  → $1${NC}"; }
-head() { echo "${BOLD}$1${NC}"; }
+hdr()  { echo "${BOLD}$1${NC}"; }   # named hdr — avoids shadowing system head command
 
 # ============================================================
 # HELPERS
 # ============================================================
 
-get_tailscale_ip() {
-    tailscale ip -4 2>/dev/null
-}
+get_tailscale_ip() { tailscale ip -4 2>/dev/null; }
 
-check_tailscale() {
-    # Retry up to 5 seconds — Tailscale may need a moment to initialise
-    for i in {1..5}; do
-        if tailscale status &>/dev/null; then
-            return 0
-        fi
-        if [ $i -eq 1 ]; then
-            info "Waiting for Tailscale..."
-        fi
-        sleep 1
-    done
-    fail "Tailscale is not connected"
-    echo "   Run: tailscale up"
-    return 1
-}
+ollama_running() { curl -sf "$OLLAMA_API" &>/dev/null; }
 
-ollama_running() {
-    curl -sf "$OLLAMA_API" &>/dev/null
-}
+content_agent_running() { pgrep -f "uvicorn server:app" &>/dev/null; }
 
 server_running() {
     [ -f "$PID_DIR/server.pid" ] && kill -0 "$(cat $PID_DIR/server.pid)" 2>/dev/null
@@ -61,9 +43,7 @@ server_responding() {
     curl -sf "http://$ip:$SERVER_PORT/" &>/dev/null
 }
 
-purge_old_logs() {
-    find "$LOG_DIR" -name "*.log" -mtime +14 -delete 2>/dev/null
-}
+purge_old_logs() { find "$LOG_DIR" -name "*.log" -mtime +14 -delete 2>/dev/null; }
 
 # ============================================================
 # START
@@ -71,7 +51,7 @@ purge_old_logs() {
 
 cmd_start() {
     echo ""
-    head "⚡ Email Agent — Starting"
+    hdr "⚡ Email Agent — Starting"
     echo "=========================="
 
     mkdir -p "$LOG_DIR"
@@ -79,32 +59,49 @@ cmd_start() {
 
     # --- Tailscale ---
     echo ""
-    head "1. Tailscale"
-    if ! check_tailscale; then exit 1; fi
+    hdr "1. Tailscale"
+    if tailscale status &>/dev/null; then
+        ok "Connected — IP: $(get_tailscale_ip)"
+    else
+        info "Not connected — attempting tailscale up..."
+        tailscale up 2>/dev/null
+        for i in {1..5}; do
+            if tailscale status &>/dev/null; then
+                echo "yes" > "$PID_DIR/email-tailscale-started-by-us"
+                ok "Connected — IP: $(get_tailscale_ip)"
+                break
+            fi
+            if [ $i -eq 5 ]; then
+                fail "Tailscale did not connect — run: tailscale up"
+                exit 1
+            fi
+            sleep 1
+        done
+    fi
     local ts_ip=$(get_tailscale_ip)
-    ok "Connected — IP: $ts_ip"
 
     # --- Ollama ---
     echo ""
-    head "2. Ollama"
-    local ollama_started_by_us=false
+    hdr "2. Ollama"
 
     if ollama_running; then
         ok "Already running"
+        rm -f "$PID_DIR/email-ollama-started-by-us"
     else
         info "Starting Ollama..."
         ollama serve >> "$LOG_DIR/ollama.log" 2>&1 &
-        echo $! > "$PID_DIR/ollama.pid"
-        ollama_started_by_us=true
+        local ollama_pid=$!
+        disown $ollama_pid
+        echo $ollama_pid > "$PID_DIR/email-ollama.pid"
+        echo "yes" > "$PID_DIR/email-ollama-started-by-us"
 
         for i in {1..10}; do
             if ollama_running; then
-                ok "Started (PID $(cat $PID_DIR/ollama.pid))"
+                ok "Started (PID $ollama_pid)"
                 break
             fi
             if [ $i -eq 10 ]; then
-                fail "Ollama did not start within 10 seconds"
-                fail "Check $LOG_DIR/ollama.log"
+                fail "Ollama did not start within 10 seconds — check $LOG_DIR/ollama.log"
                 exit 1
             fi
             sleep 1
@@ -119,36 +116,28 @@ cmd_start() {
 
     # --- Server ---
     echo ""
-    head "3. Email Agent Server"
+    hdr "3. Email Agent Server"
 
     if server_running; then
         local pid=$(cat "$PID_DIR/server.pid")
-        warn "Already running (PID $pid)"
-        warn "Use 'email-agent restart' to restart"
+        warn "Already running (PID $pid) — use 'email-agent restart' to restart"
         echo ""
         echo "=========================="
-        ok "Email Agent already running"
-        echo "   Dashboard: http://$ts_ip:$SERVER_PORT"
+        ok "Email Agent already running — http://$ts_ip:$SERVER_PORT"
         echo "=========================="
         echo ""
         return 0
     fi
 
-    if [ "$ollama_started_by_us" = true ]; then
-        echo "yes" > "$PID_DIR/ollama_started_by_us"
-    else
-        rm -f "$PID_DIR/ollama_started_by_us"
-    fi
-
     cd "$PROJECT_DIR"
-
     info "Starting server..."
-    $VENV_UVICORN main:app \
+    nohup $VENV_UVICORN main:app \
         --host "$ts_ip" \
         --port "$SERVER_PORT" \
         >> "$LOG_DIR/server.log" 2>&1 &
 
     local server_pid=$!
+    disown $server_pid
     echo $server_pid > "$PID_DIR/server.pid"
 
     info "Waiting for server to respond..."
@@ -168,9 +157,7 @@ cmd_start() {
         sleep 1
     done
 
-    # Auth proxy — forwards localhost:8000 → Tailscale IP so Microsoft OAuth
-    # callbacks (which must use localhost for HTTP) reach the real server
-    # nohup + disown prevents SIGHUP killing the proxy when this script exits
+    # Auth proxy — nohup+disown ensures it survives this script exiting
     pkill -f "auth_proxy.py" 2>/dev/null; sleep 0.5
     nohup "$PROJECT_DIR/venv/bin/python3" "$PROJECT_DIR/auth_proxy.py" \
         >> "$LOG_DIR/server.log" 2>&1 &
@@ -200,24 +187,23 @@ cmd_start() {
 
 cmd_stop() {
     echo ""
-    head "⚡ Email Agent — Stopping"
+    hdr "⚡ Email Agent — Stopping"
     echo "=========================="
 
     # --- Server ---
     echo ""
-    head "1. Server"
-    # Always kill by process name — prevents stale PID file leaving old server running
-    local running_pid=$(pgrep -f "uvicorn main:app" 2>/dev/null | head -1)
+    hdr "1. Server + Auth Proxy"
+    local running_pid=$(pgrep -f "uvicorn main:app" 2>/dev/null | command head -n1)
     if [ -n "$running_pid" ]; then
         kill "$running_pid" 2>/dev/null
         for i in {1..5}; do
             if ! kill -0 "$running_pid" 2>/dev/null; then
-                ok "Stopped (PID $running_pid)"
+                ok "Server stopped (PID $running_pid)"
                 break
             fi
             if [ $i -eq 5 ]; then
                 kill -9 "$running_pid" 2>/dev/null
-                ok "Force stopped (PID $running_pid)"
+                ok "Server force-stopped (PID $running_pid)"
             fi
             sleep 1
         done
@@ -226,8 +212,7 @@ cmd_stop() {
     fi
     rm -f "$PID_DIR/server.pid"
 
-    # --- Auth proxy ---
-    local proxy_pid=$(pgrep -f "auth_proxy.py" 2>/dev/null | head -1)
+    local proxy_pid=$(pgrep -f "auth_proxy.py" 2>/dev/null | command head -n1)
     if [ -n "$proxy_pid" ]; then
         kill "$proxy_pid" 2>/dev/null
         ok "Auth proxy stopped (PID $proxy_pid)"
@@ -236,32 +221,47 @@ cmd_stop() {
 
     # --- Ollama ---
     echo ""
-    head "2. Ollama"
-    if [ -f "$PID_DIR/ollama_started_by_us" ]; then
-        if [ -f "$PID_DIR/ollama.pid" ]; then
-            local pid=$(cat "$PID_DIR/ollama.pid")
-            if kill -0 "$pid" 2>/dev/null; then
-                kill "$pid"
+    hdr "2. Ollama"
+    if [ -f "$PID_DIR/email-ollama-started-by-us" ]; then
+        if content_agent_running; then
+            ok "Left running — content-agent is still using it"
+        else
+            local ollama_pid=$(pgrep -f "ollama" 2>/dev/null | command head -n1)
+            if [ -n "$ollama_pid" ]; then
+                kill "$ollama_pid" 2>/dev/null
                 for i in {1..5}; do
-                    if ! kill -0 "$pid" 2>/dev/null; then
-                        ok "Stopped (PID $pid)"
+                    if ! kill -0 "$ollama_pid" 2>/dev/null; then
+                        ok "Stopped (PID $ollama_pid)"
                         break
                     fi
                     if [ $i -eq 5 ]; then
-                        warn "Force stopping..."
-                        kill -9 "$pid" 2>/dev/null
-                        ok "Force stopped"
+                        kill -9 "$ollama_pid" 2>/dev/null
+                        ok "Force stopped (PID $ollama_pid)"
                     fi
                     sleep 1
                 done
             else
-                warn "Not running (stale PID file)"
+                warn "Ollama not running (already stopped)"
             fi
-            rm -f "$PID_DIR/ollama.pid"
+            rm -f "$PID_DIR/email-ollama.pid"
         fi
-        rm -f "$PID_DIR/ollama_started_by_us"
+        rm -f "$PID_DIR/email-ollama-started-by-us"
     else
         ok "Left running (not started by email-agent)"
+    fi
+
+    # --- Tailscale ---
+    echo ""
+    hdr "3. Tailscale"
+    if [ -f "$PID_DIR/email-tailscale-started-by-us" ]; then
+        if content_agent_running; then
+            ok "Left connected — content-agent is still using it"
+        else
+            tailscale down 2>/dev/null && ok "Disconnected" || warn "Could not disconnect Tailscale"
+        fi
+        rm -f "$PID_DIR/email-tailscale-started-by-us"
+    else
+        ok "Left connected (was already up before email-agent started)"
     fi
 
     echo ""
@@ -277,22 +277,19 @@ cmd_stop() {
 
 cmd_status() {
     echo ""
-    head "⚡ Email Agent — Status"
+    hdr "⚡ Email Agent — Status"
     echo "=========================="
 
-    # Tailscale
     echo ""
-    head "Tailscale"
+    hdr "Tailscale"
     if tailscale status &>/dev/null; then
-        local ip=$(get_tailscale_ip)
-        ok "Connected — IP: $ip"
+        ok "Connected — IP: $(get_tailscale_ip)"
     else
         fail "Not connected — run: tailscale up"
     fi
 
-    # Ollama
     echo ""
-    head "Ollama"
+    hdr "Ollama"
     if ollama_running; then
         ok "Running"
         if curl -sf "$OLLAMA_API" | grep -q "phi4-mini"; then
@@ -304,15 +301,16 @@ cmd_status() {
         fail "Not running"
     fi
 
-    # Server
     echo ""
-    head "Email Agent Server"
-    if server_running; then
-        local pid=$(cat "$PID_DIR/server.pid")
+    hdr "Email Agent Server"
+    local running_pid=$(pgrep -f "uvicorn main:app" 2>/dev/null | command head -n1)
+    if [ -n "$running_pid" ]; then
+        ok "Running (PID $running_pid)"
         local ip=$(get_tailscale_ip)
-        ok "Running (PID $pid)"
-        if server_responding "$ip"; then
+        if [ -n "$ip" ] && server_responding "$ip"; then
             ok "Responding at http://$ip:$SERVER_PORT"
+        elif server_responding "127.0.0.1"; then
+            ok "Responding at http://127.0.0.1:$SERVER_PORT"
         else
             warn "Process running but not responding to HTTP"
         fi
@@ -320,14 +318,29 @@ cmd_status() {
         fail "Not running"
     fi
 
-    # Log files
     echo ""
-    head "Recent log activity"
+    hdr "Auth Proxy"
+    local proxy_pid=$(pgrep -f "auth_proxy.py" 2>/dev/null | command head -n1)
+    if [ -n "$proxy_pid" ]; then
+        ok "Running (PID $proxy_pid)"
+    else
+        warn "Not running"
+    fi
+
+    echo ""
+    hdr "Content Agent"
+    if content_agent_running; then
+        ok "Running (shared Ollama/Tailscale)"
+    else
+        info "Not running"
+    fi
+
+    echo ""
+    hdr "Recent log"
     if [ -f "$LOG_DIR/server.log" ]; then
-        info "Server log (last 5 lines):"
         tail -5 "$LOG_DIR/server.log" | sed 's/^/     /'
     else
-        info "No server log yet"
+        info "No log yet"
     fi
 
     echo ""
@@ -341,7 +354,7 @@ cmd_status() {
 
 cmd_restart() {
     echo ""
-    head "⚡ Email Agent — Restarting"
+    hdr "⚡ Email Agent — Restarting"
     cmd_stop
     sleep 1
     cmd_start
@@ -353,13 +366,21 @@ cmd_restart() {
 
 cmd_debug() {
     echo ""
-    head "⚡ Email Agent — Debug mode (foreground)"
+    hdr "⚡ Email Agent — Debug mode (foreground)"
     echo "   Ctrl+C to stop"
     echo ""
 
     mkdir -p "$LOG_DIR"
 
-    if ! check_tailscale; then exit 1; fi
+    if ! tailscale status &>/dev/null; then
+        info "Tailscale not connected — attempting tailscale up..."
+        tailscale up 2>/dev/null
+        sleep 2
+        if ! tailscale status &>/dev/null; then
+            fail "Tailscale not connected — run: tailscale up"
+            exit 1
+        fi
+    fi
     local ts_ip=$(get_tailscale_ip)
     ok "Tailscale: $ts_ip"
 
@@ -368,8 +389,7 @@ cmd_debug() {
     else
         warn "Ollama not running — starting..."
         ollama serve >> "$LOG_DIR/ollama.log" 2>&1 &
-        echo $! > "$PID_DIR/ollama.pid"
-        echo "yes" > "$PID_DIR/ollama_started_by_us"
+        disown $!
         sleep 3
         if ollama_running; then
             ok "Ollama: started"
