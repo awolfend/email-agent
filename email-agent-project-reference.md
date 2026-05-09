@@ -331,7 +331,7 @@ Today's goal: [one sentence]
 
 ## 11. Current state (update this after every session)
 
-**Last updated:** 2026-05-09. Filing feature implemented (section 12.6). Sort buttons toggle direction. File button positioned between Archive and Delete. Action bar button colors follow semantic palette.
+**Last updated:** 2026-05-09. History limit raised to 1000. Manual action labels now recorded accurately (archived/deleted/replied/filed/calendar_accepted/calendar_declined). Action bar button colors: green=send/accept, blue=reply, gray=archive, teal=file, red=delete/decline, orange=flag. GitHub backup live at https://github.com/awolfend/email-agent (private).
 
 **All phases 1–6: Complete. All three accounts: Complete.**
 
@@ -516,15 +516,20 @@ Footers stored in SQLite `settings` table as `footer_financial` and `footer_gmai
 7. ✅ Smart suggestions shown at top of picker after first filing for a sender domain
 8. ⬜ Cross-account filing — lower priority, not yet implemented
 
-### 12.7 — GitHub backup (Pending — needs one-time setup)
+### 12.7 — GitHub backup ✅ Complete
 
-Git is initialised, `.gitignore` is in place, and all safe files are staged. Sensitive files excluded: `config/.env`, `config/tokens_graph.json`, `config/tokens_gmail.json`, `config/agent.db`, `logs/`, `__pycache__/`, `.DS_Store`.
+Private repo: **https://github.com/awolfend/email-agent**
 
-**To complete:**
-1. Open Terminal and run `gh auth login` — choose GitHub.com → HTTPS → Login with a web browser
-2. Come back to Claude Code — it will create the private repo, commit, and push automatically
+Sensitive files excluded by `.gitignore`: `config/.env`, `config/tokens_graph.json`, `config/tokens_gmail.json`, `config/agent.db`, `logs/`, `__pycache__/`, `.DS_Store`.
 
-The repo should be **private** (contains business prompts, client-facing copy, and system architecture).
+**To push changes after each session:**
+```
+git add agent/ connectors/ db/ ui/ main.py email-agent email-agent-project-reference.md .gitignore
+git commit -m "..."
+git push
+```
+
+Never commit anything from `config/` — secrets and tokens live there.
 
 ### 12.8 — Phase 7 — Telegram integration (Priority 5)
 Mobile channel for reviewing and actioning emails while travelling. Library: `python-telegram-bot`.
