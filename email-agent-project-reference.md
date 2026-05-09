@@ -331,7 +331,7 @@ Today's goal: [one sentence]
 
 ## 11. Current state (update this after every session)
 
-**Last updated:** 2026-05-09. Cross-account filing complete (12.6 fully done). History limit 1000. Manual action labels recorded accurately. Button colors: green=send/accept, blue=reply, gray=archive, teal=file, red=delete/decline, orange=flag. GitHub backup: https://github.com/awolfend/email-agent (private).
+**Last updated:** 2026-05-09. Cross-account filing complete. Secret rotation completed (financial + Gmail). Auth proxy added for localhost OAuth callbacks. Restart script fixed to kill server by process name instead of PID file.
 
 **All phases 1–6: Complete. All three accounts: Complete.**
 
@@ -384,7 +384,6 @@ Today's goal: [one sentence]
 4. Choose next item from Section 12
 
 **Known issues:**
-- Rotate Azure and Gmail client secrets — both were visible in chat
 - `GEMINI_API_KEY` not yet set (deferred)
 
 **All files:**
