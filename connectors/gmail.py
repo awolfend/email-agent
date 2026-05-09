@@ -491,3 +491,42 @@ async def file_to_label(email_id: str, label_id: str):
             json={"addLabelIds": [label_id], "removeLabelIds": ["INBOX"]},
         )
         response.raise_for_status()
+
+
+async def export_mime(email_id: str) -> bytes:
+    """Export a message as raw MIME bytes — used for cross-account filing."""
+    token = await get_valid_token()
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        resp = await client.get(
+            f"{GMAIL_BASE}/messages/{email_id}",
+            headers={"Authorization": f"Bearer {token}"},
+            params={"format": "raw"},
+        )
+        resp.raise_for_status()
+        raw = resp.json().get("raw", "")
+        return base64.urlsafe_b64decode(raw + "==")
+
+
+async def import_mime(label_id: str, mime_bytes: bytes) -> str:
+    """Import raw MIME bytes as a new Gmail message and apply a target label.
+    Used for cross-account filing — creates a copy in the target label."""
+    token = await get_valid_token()
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        resp = await client.post(
+            "https://www.googleapis.com/upload/gmail/v1/users/me/messages",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "message/rfc822",
+            },
+            params={"uploadType": "media"},
+            content=mime_bytes,
+        )
+        resp.raise_for_status()
+        msg_id = resp.json().get("id", "")
+        if msg_id and label_id:
+            await client.post(
+                f"{GMAIL_BASE}/messages/{msg_id}/modify",
+                headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+                json={"addLabelIds": [label_id], "removeLabelIds": ["INBOX"]},
+            )
+        return msg_id
