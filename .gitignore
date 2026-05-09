@@ -1,0 +1,37 @@
+# Secrets and credentials — never commit these
+config/.env
+config/tokens_graph.json
+config/tokens_gmail.json
+
+# Database — contains email content
+config/agent.db
+
+# Logs and runtime files
+logs/
+*.pid
+*.log
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Virtual environment
+venv/
+env/
+.venv/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# VS Code
+.vscode/
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
