@@ -830,6 +830,38 @@
         </div>
     </div>
 
+    <div id="history-sidebar-section" style="display:none">
+        <div class="sidebar-section">Classification</div>
+        <div class="stat-row active" onclick="filterHistoryClass('all')" id="hfilter-all">
+            <span class="label"><span class="dot" style="background:var(--text-dim)"></span>All</span>
+            <span class="stat-badge" id="hstat-all">0</span>
+        </div>
+        <div class="stat-row" onclick="filterHistoryClass('action_required')" id="hfilter-action_required">
+            <span class="label"><span class="dot dot-action"></span>Action Required</span>
+            <span class="stat-badge" id="hstat-action_required">0</span>
+        </div>
+        <div class="stat-row" onclick="filterHistoryClass('calendar')" id="hfilter-calendar">
+            <span class="label"><span class="dot dot-calendar"></span>Calendar</span>
+            <span class="stat-badge" id="hstat-calendar">0</span>
+        </div>
+        <div class="stat-row" onclick="filterHistoryClass('fyi')" id="hfilter-fyi">
+            <span class="label"><span class="dot dot-fyi"></span>FYI</span>
+            <span class="stat-badge" id="hstat-fyi">0</span>
+        </div>
+        <div class="stat-row" onclick="filterHistoryClass('notification')" id="hfilter-notification">
+            <span class="label"><span class="dot dot-notification"></span>Notifications</span>
+            <span class="stat-badge" id="hstat-notification">0</span>
+        </div>
+        <div class="stat-row" onclick="filterHistoryClass('newsletter')" id="hfilter-newsletter">
+            <span class="label"><span class="dot dot-newsletter"></span>Newsletters</span>
+            <span class="stat-badge" id="hstat-newsletter">0</span>
+        </div>
+        <div class="stat-row" onclick="filterHistoryClass('spam')" id="hfilter-spam">
+            <span class="label"><span class="dot dot-spam"></span>Spam</span>
+            <span class="stat-badge" id="hstat-spam">0</span>
+        </div>
+    </div>
+
     <div style="flex:1"></div>
     <div class="poll-btn" onclick="triggerPoll()">⟳ Poll Now</div>
     <div class="clear-btn" id="clear-btn" style="display:none;" onclick="confirmClearHistory()">🗑 Clear History</div>
@@ -1121,6 +1153,7 @@
     let currentAccountFilter = 'all';
     let currentClassFilter = 'all';
     let currentHistoryTab = 'sent';
+    let currentHistoryClassFilter = 'all';
     let currentSort = 'classification';
     let sortDirs = { classification: 'asc', date: 'desc' };
     let draftVisible = false;
@@ -1154,13 +1187,26 @@
             document.getElementById('email-detail').style.display = 'none';
             document.getElementById('empty-msg').textContent = 'Select an email to review';
             document.getElementById('inbox-sidebar-section').style.display = mode === 'inbox' ? '' : 'none';
+            document.getElementById('history-sidebar-section').style.display = mode === 'history' ? '' : 'none';
             document.getElementById('history-tabs').style.display = mode === 'history' ? 'flex' : 'none';
             document.getElementById('clear-btn').style.display = mode === 'history' ? '' : 'none';
             document.getElementById('queue-title').textContent = mode === 'inbox' ? 'Inbox' : 'History';
+            if (mode === 'history') {
+                currentHistoryClassFilter = 'all';
+                document.querySelectorAll('.stat-row[id^="hfilter-"]').forEach(r => r.classList.remove('active'));
+                const hAll = document.getElementById('hfilter-all');
+                if (hAll) hAll.classList.add('active');
+            }
             renderQueue();
-            updateClassificationCounts();
+            if (mode === 'history') {
+                updateHistoryCounts();
+            } else {
+                updateClassificationCounts();
+                updateAccountCounts();
+            }
         } else {
             document.getElementById('inbox-sidebar-section').style.display = 'none';
+            document.getElementById('history-sidebar-section').style.display = 'none';
             document.getElementById('clear-btn').style.display = 'none';
             loadVoiceStatus();
             loadSettings();
@@ -1174,7 +1220,12 @@
         currentAccountFilter = account;
         document.querySelectorAll('[id^="acct-"]').forEach(r => r.classList.remove('active'));
         document.getElementById(`acct-${account}`).classList.add('active');
-        updateClassificationCounts();
+        if (currentMode === 'history') {
+            updateHistoryCounts();
+        } else {
+            updateClassificationCounts();
+            updateAccountCounts();
+        }
         renderQueue();
     }
 
@@ -1186,6 +1237,15 @@
         renderQueue();
     }
 
+    function filterHistoryClass(classification) {
+        currentHistoryClassFilter = classification;
+        document.querySelectorAll('.stat-row[id^="hfilter-"]').forEach(r => r.classList.remove('active'));
+        const el = document.getElementById(`hfilter-${classification}`);
+        if (el) el.classList.add('active');
+        updateAccountCounts();
+        renderQueue();
+    }
+
     function setHistoryTab(tab, btn) {
         currentHistoryTab = tab;
         document.querySelectorAll('.history-tab').forEach(b => b.classList.remove('active'));
@@ -1193,6 +1253,7 @@
         currentEmail = null;
         document.getElementById('empty-state').style.display = 'flex';
         document.getElementById('email-detail').style.display = 'none';
+        updateHistoryCounts();
         renderQueue();
     }
 
@@ -1240,18 +1301,60 @@
         document.getElementById('stat-all').textContent = total;
     }
 
-    async function loadStats() {
-        const res = await fetch('/api/stats');
-        const stats = await res.json();
-        const a = stats.by_account || {};
-        const fin = a['financial'] || 0;
-        const gml = a['gmail'] || 0;
-        const per = a['personal'] || 0;
+    function updateAccountCounts() {
+        let base = allEmails;
+        if (currentMode === 'inbox') {
+            base = base.filter(e => e.status === 'pending');
+        } else if (currentMode === 'history') {
+            if (currentHistoryTab === 'all') {
+                base = base.filter(e => e.status !== 'pending');
+            } else {
+                base = base.filter(e => e.status === currentHistoryTab);
+            }
+            if (currentHistoryClassFilter !== 'all') {
+                base = base.filter(e => e.classification === currentHistoryClassFilter);
+            }
+        }
+        const counts = {};
+        base.forEach(e => { counts[e.account] = (counts[e.account] || 0) + 1; });
+        const fin = counts['financial'] || 0;
+        const gml = counts['gmail'] || 0;
+        const per = counts['personal'] || 0;
         document.getElementById('stat-financial').textContent = fin;
         document.getElementById('stat-gmail').textContent = gml;
         document.getElementById('stat-personal').textContent = per;
         document.getElementById('stat-acct-all').textContent = fin + gml + per;
+    }
+
+    function updateHistoryCounts() {
+        let base = allEmails;
+        if (currentAccountFilter !== 'all') {
+            base = base.filter(e => e.account === currentAccountFilter);
+        }
+        if (currentHistoryTab === 'all') {
+            base = base.filter(e => e.status !== 'pending');
+        } else {
+            base = base.filter(e => e.status === currentHistoryTab);
+        }
+        const counts = {};
+        let total = 0;
+        base.forEach(e => {
+            const k = e.classification || 'unknown';
+            counts[k] = (counts[k] || 0) + 1;
+            total++;
+        });
+        ['action_required','calendar','fyi','notification','newsletter','spam','unknown','error'].forEach(k => {
+            const el = document.getElementById(`hstat-${k}`);
+            if (el) el.textContent = counts[k] || 0;
+        });
+        document.getElementById('hstat-all').textContent = total;
+        updateAccountCounts();
+    }
+
+    async function loadStats() {
+        await fetch('/api/stats');
         updateClassificationCounts();
+        updateAccountCounts();
     }
 
     // ---- Queue ----
@@ -1271,6 +1374,9 @@
                 emails = emails.filter(e => e.status !== 'pending');
             } else {
                 emails = emails.filter(e => e.status === currentHistoryTab);
+            }
+            if (currentHistoryClassFilter !== 'all') {
+                emails = emails.filter(e => e.classification === currentHistoryClassFilter);
             }
         }
         return getSortedEmails(emails);
