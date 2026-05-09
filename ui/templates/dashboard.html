@@ -110,6 +110,17 @@
             font-weight: 600;
         }
 
+        .auth-warning {
+            display: none;
+            color: #f59e0b;
+            font-size: 11px;
+            margin-left: 5px;
+            cursor: pointer;
+            vertical-align: middle;
+            line-height: 1;
+        }
+        .auth-warning:hover { color: #d97706; }
+
         .dot { width: 7px; height: 7px; border-radius: 50%; }
         .dot-action { background: var(--accent); }
         .dot-fyi { background: var(--green); }
@@ -764,15 +775,15 @@
         <span class="stat-badge" id="stat-acct-all">0</span>
     </div>
     <div class="stat-row" onclick="filterAccount('financial')" id="acct-financial">
-        <span class="label"><span class="dot" style="background:var(--accent)"></span>Financial Planning</span>
+        <span class="label"><span class="dot" style="background:var(--accent)"></span>Financial Planning<span class="auth-warning" id="auth-warn-financial" onclick="event.stopPropagation(); openAuthLogin('financial')" title="Authentication error — click to re-authenticate">⚠</span></span>
         <span class="stat-badge" id="stat-financial">0</span>
     </div>
     <div class="stat-row" onclick="filterAccount('gmail')" id="acct-gmail">
-        <span class="label"><span class="dot" style="background:var(--green)"></span>Positive Tax</span>
+        <span class="label"><span class="dot" style="background:var(--green)"></span>Positive Tax<span class="auth-warning" id="auth-warn-gmail" onclick="event.stopPropagation(); openAuthLogin('gmail')" title="Authentication error — click to re-authenticate">⚠</span></span>
         <span class="stat-badge" id="stat-gmail">0</span>
     </div>
     <div class="stat-row" onclick="filterAccount('personal')" id="acct-personal">
-        <span class="label"><span class="dot" style="background:var(--yellow,#f0b429)"></span>Personal</span>
+        <span class="label"><span class="dot" style="background:var(--yellow,#f0b429)"></span>Personal<span class="auth-warning" id="auth-warn-personal" onclick="event.stopPropagation(); openAuthLogin('personal')" title="Authentication error — check AZURE_CLIENT_SECRET_PERSONAL in config/.env and restart">⚠</span></span>
         <span class="stat-badge" id="stat-personal">0</span>
     </div>
 
@@ -1272,11 +1283,27 @@
         }).join('');
     }
 
+    function openAuthLogin(account) {
+        window.open(`http://localhost:8000/auth/login/${account}`, '_blank');
+    }
+
+    async function loadAuthErrors() {
+        try {
+            const res = await fetch('/api/auth-errors');
+            const errors = await res.json();
+            for (const [account, msg] of Object.entries(errors)) {
+                const el = document.getElementById(`auth-warn-${account}`);
+                if (el) el.style.display = msg ? 'inline' : 'none';
+            }
+        } catch (e) {}
+    }
+
     async function loadQueue() {
         const res = await fetch('/api/queue');
         allEmails = await res.json();
         renderQueue();
         loadStats();
+        loadAuthErrors();
     }
 
     function selectNextEmail(afterEmailId) {
