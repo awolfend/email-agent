@@ -371,6 +371,28 @@ async def record_filing(sender_domain: str, target_account: str, target_folder_i
         await db.commit()
 
 
+async def set_auth_error(account: str, message: str):
+    await set_setting(f"auth_error_{account}", message[:500])
+
+
+async def clear_auth_error(account: str):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("DELETE FROM settings WHERE key = ?", (f"auth_error_{account}",))
+        await db.commit()
+
+
+async def get_auth_errors() -> dict:
+    result = {}
+    async with aiosqlite.connect(DB_PATH) as db:
+        for account in ("financial", "gmail", "personal"):
+            async with db.execute(
+                "SELECT value FROM settings WHERE key = ?", (f"auth_error_{account}",)
+            ) as cursor:
+                row = await cursor.fetchone()
+                result[account] = row[0] if row else None
+    return result
+
+
 async def get_filing_suggestions(sender_domain: str, limit: int = 5) -> list:
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row

@@ -6,7 +6,7 @@ from connectors.graph import get_emails as graph_get_emails
 from connectors.gmail import get_emails as gmail_get_emails
 from agent.classifier import classify_email
 from agent.actions import execute_action
-from db.database import log_action, get_email_by_id, update_email_status, mark_missing_as_archived
+from db.database import log_action, get_email_by_id, update_email_status, mark_missing_as_archived, set_auth_error, clear_auth_error
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -76,9 +76,13 @@ async def poll_financial():
         missing = await mark_missing_as_archived("financial", inbox_ids)
         if missing:
             logger.info(f"[financial] Reconciled {len(missing)} emails no longer in inbox")
+        await clear_auth_error("financial")
 
     except Exception as e:
         logger.error(f"Error polling financial inbox: {e}")
+        _AUTH_KEYWORDS = ("401", "No token", "OAuth", "invalid_grant", "invalid_client", "AADSTS", "Unauthorized", "unauthorized")
+        if any(k in str(e) for k in _AUTH_KEYWORDS):
+            await set_auth_error("financial", str(e))
 
 
 async def poll_gmail():
@@ -137,9 +141,13 @@ async def poll_gmail():
         missing = await mark_missing_as_archived("gmail", inbox_ids)
         if missing:
             logger.info(f"[gmail] Reconciled {len(missing)} emails no longer in inbox")
+        await clear_auth_error("gmail")
 
     except Exception as e:
         logger.error(f"Error polling Gmail inbox: {e}")
+        _AUTH_KEYWORDS = ("401", "No token", "OAuth", "invalid_grant", "invalid_client", "AADSTS", "Unauthorized", "unauthorized")
+        if any(k in str(e) for k in _AUTH_KEYWORDS):
+            await set_auth_error("gmail", str(e))
 
 
 async def poll_personal():
@@ -196,9 +204,13 @@ async def poll_personal():
         missing = await mark_missing_as_archived("personal", inbox_ids)
         if missing:
             logger.info(f"[personal] Reconciled {len(missing)} emails no longer in inbox")
+        await clear_auth_error("personal")
 
     except Exception as e:
         logger.error(f"Error polling personal inbox: {e}")
+        _AUTH_KEYWORDS = ("401", "No token", "OAuth", "invalid_grant", "invalid_client", "AADSTS", "Unauthorized", "unauthorized")
+        if any(k in str(e) for k in _AUTH_KEYWORDS):
+            await set_auth_error("personal", str(e))
 
 
 async def poll_all():

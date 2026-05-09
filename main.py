@@ -49,6 +49,7 @@ from db.database import (
     clear_history, delete_record, get_voice_profile_meta,
     get_setting, set_setting,
     record_filing, get_filing_suggestions,
+    get_auth_errors,
 )
 from agent.poller import start_scheduler, poll_all
 from agent.drafter import generate_draft
@@ -125,6 +126,10 @@ async def api_queue():
 @app.get("/api/stats")
 async def api_stats():
     return JSONResponse(await get_stats())
+
+@app.get("/api/auth-errors")
+async def api_auth_errors():
+    return JSONResponse(await get_auth_errors())
 
 @app.post("/api/email/{email_id}/status")
 async def api_status(email_id: str, body: StatusUpdate):
