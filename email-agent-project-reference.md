@@ -331,7 +331,7 @@ Today's goal: [one sentence]
 
 ## 11. Current state (update this after every session)
 
-**Last updated:** 2026-05-09. Cross-account filing complete. Secret rotation completed (financial + Gmail). Auth proxy added for localhost OAuth callbacks. Restart script fixed to kill server by process name instead of PID file. Auth proxy auto-start fixed — nohup+disown ensures proxy survives script exit; stop uses pgrep to find real process.
+**Last updated:** 2026-05-09. Cross-account filing complete. Secret rotation completed (financial + Gmail). Auth proxy added for localhost OAuth callbacks. Restart script fixed to kill server by process name instead of PID file. Auth proxy auto-start fixed — nohup+disown ensures proxy survives script exit; stop uses pgrep to find real process. Auth error warning triangles added to sidebar — amber ⚠ appears next to account on auth failure, clickable to re-auth URL, clears on next successful poll.
 
 **All phases 1–6: Complete. All three accounts: Complete.**
 
@@ -376,6 +376,7 @@ Today's goal: [one sentence]
 - Hard delete — autonomous spam only
 - No confirmation dialogs on send or delete
 - Resizable panels, auto-advance, all actions logged to SQLite
+- Auth error warning: amber ⚠ triangle appears next to account name in sidebar when a poll cycle fails with an auth error (401, invalid_grant, etc.). Clicking it opens `http://localhost:8000/auth/login/{account}` in a new tab to re-authenticate. Personal account triangle tooltip directs to rotate client secret in .env instead. Triangle clears automatically on next successful poll. Powered by `GET /api/auth-errors`, `set_auth_error()` / `clear_auth_error()` in `db/database.py`, auth keyword detection in `agent/poller.py`.
 
 **Next session — start here:**
 1. `email-agent start`
