@@ -6,7 +6,7 @@ from connectors.graph import get_emails as graph_get_emails
 from connectors.gmail import get_emails as gmail_get_emails
 from agent.classifier import classify_email
 from agent.actions import execute_action
-from db.database import log_action, get_email_by_id, update_email_status, mark_missing_as_archived, set_auth_error, clear_auth_error
+from db.database import log_action, get_email_by_id, update_email_status, mark_missing_as_archived, set_auth_error, clear_auth_error, prune_old_records, get_sender_rule, upsert_sender_rule
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -28,26 +28,37 @@ async def poll_financial():
         logger.info(f"[financial] Found {len(emails)} emails in inbox")
 
         for email in emails:
-            email_id = email.get("id", "unknown")
-            inbox_ids.add(email_id)
+            graph_id = email.get("id", "unknown")
+            stable_id = email.get("internetMessageId") or graph_id
+            inbox_ids.add(stable_id)
             subject = email.get("subject", "(no subject)")
             sender = email.get("from", {}).get("emailAddress", {}).get("address", "unknown")
             body = email.get("fullBody") or email.get("bodyPreview", "")
             received_at = email.get("receivedDateTime")
 
-            # Skip already actioned emails
-            existing = await get_email_by_id(email_id)
+            # Skip already actioned emails — use stable internetMessageId so user
+            # overrides survive the email being moved out and back to inbox
+            existing = await get_email_by_id(stable_id)
             if existing and existing.get("status") not in (None, "pending"):
                 logger.info(f"[financial] Skipping actioned: {subject[:50]} ({existing['status']})")
                 continue
 
-            result = await classify_email(subject, sender, body[:1000])
+            rule = await get_sender_rule(sender)
+            if rule and (rule['source'] == 'manual' or rule['count'] >= 2):
+                result = {
+                    "classification": rule['classification'],
+                    "confidence": 1.0,
+                    "reason": f"sender rule ({rule['source']}, {rule['count']}x)",
+                }
+            else:
+                result = await classify_email(subject, sender, body[:1000])
+                await upsert_sender_rule(sender, result.get("classification", ""))
             classification = result.get("classification")
             confidence = result.get("confidence", 0.0)
 
             action_label, status = await execute_action(
                 account="financial",
-                email_id=email_id,
+                email_id=graph_id,  # Graph folder-scoped ID for API operations
                 subject=subject,
                 sender=sender,
                 classification=classification,
@@ -56,7 +67,7 @@ async def poll_financial():
 
             await log_action(
                 account="financial",
-                email_id=email_id,
+                email_id=stable_id,  # stable RFC 2822 ID for DB lookups
                 subject=subject,
                 sender=sender,
                 action=action_label,
@@ -68,7 +79,7 @@ async def poll_financial():
             )
 
             if status != "pending":
-                await update_email_status(email_id, status)
+                await update_email_status(stable_id, status)
 
             logger.info(f"[financial] {subject[:50]} → {classification} ({confidence:.2f}) → {action_label}")
 
@@ -106,7 +117,16 @@ async def poll_gmail():
                 logger.info(f"[gmail] Skipping actioned: {subject[:50]} ({existing['status']})")
                 continue
 
-            result = await classify_email(subject, sender, body[:1000])
+            rule = await get_sender_rule(sender)
+            if rule and (rule['source'] == 'manual' or rule['count'] >= 2):
+                result = {
+                    "classification": rule['classification'],
+                    "confidence": 1.0,
+                    "reason": f"sender rule ({rule['source']}, {rule['count']}x)",
+                }
+            else:
+                result = await classify_email(subject, sender, body[:1000])
+                await upsert_sender_rule(sender, result.get("classification", ""))
             classification = result.get("classification")
             confidence = result.get("confidence", 0.0)
 
@@ -158,25 +178,35 @@ async def poll_personal():
         logger.info(f"[personal] Found {len(emails)} emails in inbox")
 
         for email in emails:
-            email_id = email.get("id", "unknown")
-            inbox_ids.add(email_id)
+            graph_id = email.get("id", "unknown")
+            stable_id = email.get("internetMessageId") or graph_id
+            inbox_ids.add(stable_id)
             subject = email.get("subject", "(no subject)")
             sender = email.get("from", {}).get("emailAddress", {}).get("address", "unknown")
             body = email.get("fullBody") or email.get("bodyPreview", "")
             received_at = email.get("receivedDateTime")
 
-            existing = await get_email_by_id(email_id)
+            existing = await get_email_by_id(stable_id)
             if existing and existing.get("status") not in (None, "pending"):
                 logger.info(f"[personal] Skipping actioned: {subject[:50]} ({existing['status']})")
                 continue
 
-            result = await classify_email(subject, sender, body[:1000])
+            rule = await get_sender_rule(sender)
+            if rule and (rule['source'] == 'manual' or rule['count'] >= 2):
+                result = {
+                    "classification": rule['classification'],
+                    "confidence": 1.0,
+                    "reason": f"sender rule ({rule['source']}, {rule['count']}x)",
+                }
+            else:
+                result = await classify_email(subject, sender, body[:1000])
+                await upsert_sender_rule(sender, result.get("classification", ""))
             classification = result.get("classification")
             confidence = result.get("confidence", 0.0)
 
             action_label, status = await execute_action(
                 account="personal",
-                email_id=email_id,
+                email_id=graph_id,  # Graph folder-scoped ID for API operations
                 subject=subject,
                 sender=sender,
                 classification=classification,
@@ -185,7 +215,7 @@ async def poll_personal():
 
             await log_action(
                 account="personal",
-                email_id=email_id,
+                email_id=stable_id,  # stable RFC 2822 ID for DB lookups
                 subject=subject,
                 sender=sender,
                 action=action_label,
@@ -197,7 +227,7 @@ async def poll_personal():
             )
 
             if status != "pending":
-                await update_email_status(email_id, status)
+                await update_email_status(stable_id, status)
 
             logger.info(f"[personal] {subject[:50]} → {classification} ({confidence:.2f}) → {action_label}")
 
@@ -215,6 +245,9 @@ async def poll_personal():
 
 async def poll_all():
     await asyncio.gather(poll_financial(), poll_gmail(), poll_personal())
+    pruned = await prune_old_records(days=90)
+    if pruned:
+        logger.info(f"Pruned {pruned} records older than 90 days")
 
 
 def start_scheduler():

@@ -77,6 +77,16 @@ async def init_db():
             )
         """)
         await db.execute("""
+            CREATE TABLE IF NOT EXISTS sender_rules (
+                sender          TEXT PRIMARY KEY,
+                classification  TEXT NOT NULL,
+                count           INTEGER DEFAULT 1,
+                source          TEXT DEFAULT 'learned',
+                created_at      TEXT NOT NULL,
+                last_seen       TEXT NOT NULL
+            )
+        """)
+        await db.execute("""
             CREATE TABLE IF NOT EXISTS filing_history (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 sender_domain TEXT NOT NULL,
@@ -240,6 +250,20 @@ async def delete_record(email_id: str):
         await db.commit()
 
 
+async def prune_old_records(days: int = 90) -> int:
+    """Delete non-pending records older than `days` days. Returns count deleted."""
+    from datetime import datetime, timezone, timedelta
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "DELETE FROM action_log WHERE status != 'pending' AND timestamp < ?",
+            (cutoff,)
+        )
+        count = cursor.rowcount
+        await db.commit()
+    return count
+
+
 async def clear_history(scope: str) -> int:
     """Delete non-pending history records by scope. Returns count deleted."""
     valid_scopes = {"sent", "archived", "deleted", "all"}
@@ -354,6 +378,104 @@ async def get_stats():
             for row in await cursor.fetchall():
                 stats["by_status"][row["status"]] = row["count"]
         return stats
+
+
+async def upsert_sender_rule(sender: str, classification: str, source: str = 'learned') -> None:
+    """Create or update a sender classification rule.
+
+    Learned rules strengthen on consistency (fire at count >= 2) and decay on conflict.
+    Manual rules (source='manual') fire immediately and are not overwritten by learned data.
+    Classifications of 'error' or 'unknown' are never stored.
+    """
+    if not sender or classification in ('error', 'unknown', ''):
+        return
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc).isoformat()
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT classification, count, source FROM sender_rules WHERE sender = ?", (sender,)
+        ) as cur:
+            row = await cur.fetchone()
+        row = dict(row) if row else None
+
+        if source == 'manual':
+            if not row:
+                await db.execute(
+                    "INSERT INTO sender_rules (sender, classification, count, source, created_at, last_seen) "
+                    "VALUES (?, ?, 1, 'manual', ?, ?)",
+                    (sender, classification, now, now)
+                )
+            else:
+                await db.execute(
+                    "UPDATE sender_rules SET classification = ?, count = 1, source = 'manual', last_seen = ? "
+                    "WHERE sender = ?",
+                    (classification, now, sender)
+                )
+        else:
+            if not row:
+                await db.execute(
+                    "INSERT INTO sender_rules (sender, classification, count, source, created_at, last_seen) "
+                    "VALUES (?, ?, 1, 'learned', ?, ?)",
+                    (sender, classification, now, now)
+                )
+            elif row['source'] == 'manual':
+                # Manual rules are sticky — only update last_seen
+                await db.execute(
+                    "UPDATE sender_rules SET last_seen = ? WHERE sender = ?", (now, sender)
+                )
+            elif row['classification'] == classification:
+                # Consistent signal — strengthen the rule
+                await db.execute(
+                    "UPDATE sender_rules SET count = count + 1, last_seen = ? WHERE sender = ?",
+                    (now, sender)
+                )
+            else:
+                # Conflicting signal — decay the rule; delete if fully eroded
+                new_count = row['count'] - 1
+                if new_count <= 0:
+                    await db.execute("DELETE FROM sender_rules WHERE sender = ?", (sender,))
+                else:
+                    await db.execute(
+                        "UPDATE sender_rules SET count = ?, last_seen = ? WHERE sender = ?",
+                        (new_count, now, sender)
+                    )
+        await db.commit()
+
+
+async def get_sender_rule(sender: str) -> dict | None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT * FROM sender_rules WHERE sender = ?", (sender,)
+        ) as cur:
+            row = await cur.fetchone()
+    return dict(row) if row else None
+
+
+async def get_all_sender_rules() -> list:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT * FROM sender_rules ORDER BY last_seen DESC"
+        ) as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
+
+async def delete_sender_rule(sender: str) -> bool:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "DELETE FROM sender_rules WHERE sender = ?", (sender,)
+        )
+        await db.commit()
+    return cursor.rowcount > 0
+
+
+async def clear_all_sender_rules() -> int:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute("DELETE FROM sender_rules")
+        await db.commit()
+    return cursor.rowcount
 
 
 async def record_filing(sender_domain: str, target_account: str, target_folder_id: str, target_folder_name: str):

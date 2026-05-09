@@ -9,6 +9,7 @@
 ## 1. Who this is for
 
 A sole operator running three businesses/personas:
+
 - Financial planning business (primary client-facing)
 - Tax business (separate client base)
 - Personal life
@@ -254,7 +255,7 @@ File button always sits between Archive and Delete (or after Archive when there 
 │   └── gmail.py             # Gmail — paginated full inbox, soft delete, hard_delete_email, archive, unarchive, send, mark read
 ├── db/
 │   ├── __init__.py
-│   └── database.py          # SQLite — action_log, sent_examples, voice_profiles, settings, filing_history tables
+│   └── database.py          # SQLite — action_log, sent_examples, voice_profiles, settings, filing_history, sender_rules tables
 ├── ui/
 │   ├── templates/
 │   │   └── dashboard.html   # Two-mode UI, account filter, history view, no confirmation dialogs
@@ -331,9 +332,28 @@ Today's goal: [one sentence]
 
 ## 11. Current state (update this after every session)
 
-**Last updated:** 2026-05-09. Cross-account filing complete. Secret rotation completed (financial + Gmail). Auth proxy added for localhost OAuth callbacks. Restart script fixed to kill server by process name instead of PID file. Auth proxy auto-start fixed — nohup+disown ensures proxy survives script exit; stop uses pgrep to find real process. Auth error warning triangles added to sidebar — amber ⚠ appears next to account on auth failure, clickable to re-auth URL, clears on next successful poll.
+**Last updated:** 2026-05-10 (session 3). Three significant improvements to agent reliability and intelligence:
+1. **Re-filing bug fixed** — emails restored to inbox by the user were being re-actioned because Microsoft Graph's `id` field is folder-scoped (changes on every move). Fixed by using `internetMessageId` (RFC 2822 Message-ID header, globally stable) as the DB lookup key while keeping the Graph `id` for API calls.
+2. **DB auto-pruning** — non-pending `action_log` records older than 90 days are deleted automatically after each full poll cycle. Prevents indefinite growth from emails actioned by Outlook directly or left in history. `sender_rules` table is exempt.
+3. **Sender memory (classification rules)** — the classifier now remembers sender patterns. After 2 consistent LLM classifications from the same sender, a rule fires on all future emails from that sender (LLM bypassed). Manual reclassification via the UI immediately creates a sticky rule that the LLM cannot override. Rules tracked in a separate `sender_rules` table (never pruned). Management endpoints: `GET /api/sender-rules`, `DELETE /api/sender-rules`, `DELETE /api/sender-rules/{sender}`.
 
 **All phases 1–6: Complete. All three accounts: Complete.**
+
+**email-agent script — important fixes (cumulative):**
+- **`head()` → `hdr()`** — script defined `head()` as a bold-heading shell function, shadowing the system `head` command. In `cmd_stop`, every `pgrep ... | head -1` called the shell function instead of filtering output, so `running_pid` contained ANSI escape text instead of a real PID — stop never actually killed anything. Fixed by renaming to `hdr()` (session 1). Session 2: same rename applied to the remaining call sites.
+- **`nohup` + `disown`** added to main server start. Ensures process survives script exit.
+- **`tailscale up` attempt on start** — tries `tailscale up` before failing. Records `email-tailscale-started-by-us` flag if it brought Tailscale up.
+- **Tailscale stop** — disconnects only if email-agent brought it up AND content-agent is not still running.
+- **`content_agent_running()`** added — `pgrep -f "uvicorn server:app"`. Used for shared-resource coordination.
+- **Ollama ownership flag written at start time** — flag `ollama_started_by_us` is now written immediately when `ollama serve` is launched, not at the end of `cmd_start`. Previously, if the server was already running (early-return path), the flag was never written even though Ollama had been started and `ollama.pid` had been written — leaving Ollama orphaned on next stop.
+- **Ollama stop — ownership transfer model** — on stop, checks both `ollama_started_by_us` AND `~/content-agent/logs/content-ollama-started-by-us`. If either flag exists and content-agent IS running: write content-agent's flag (transfer ownership) so it will clean up. If content-agent is NOT running: kill Ollama (`pgrep -f "ollama serve"`) and remove all flags. If neither flag exists: Ollama was pre-existing, leave it alone.
+- **Status shows Content Agent** — `email-agent status` reports whether content-agent is running.
+
+**Shared resource coordination (email-agent ↔ content-agent):**
+- email-agent detects content-agent via: `pgrep -f "uvicorn server:app"`
+- content-agent detects email-agent via: `pgrep -f "uvicorn main:app"`
+- **Ollama — ownership transfer model:** each agent checks both flag files on stop. Last agent out kills Ollama. If neither flag exists (Ollama was pre-existing), neither agent touches it. Full model documented in content-agent project reference.
+- Tailscale: per-agent ownership. Neither disconnects if the other is still running. Pre-existing connections never touched.
 
 **What is working:**
 - `email-agent start/stop/restart/debug/status` — Tailscale CLI, Ollama, FastAPI all managed
@@ -378,6 +398,12 @@ Today's goal: [one sentence]
 - Resizable panels, auto-advance, all actions logged to SQLite
 - Auth error warning: amber ⚠ triangle appears next to account name in sidebar when a poll cycle fails with an auth error (401, invalid_grant, etc.). Clicking it opens `http://localhost:8000/auth/login/{account}` in a new tab to re-authenticate. Personal account triangle tooltip directs to rotate client secret in .env instead. Triangle clears automatically on next successful poll. Powered by `GET /api/auth-errors`, `set_auth_error()` / `clear_auth_error()` in `db/database.py`, auth keyword detection in `agent/poller.py`.
 
+- **User overrides stick permanently** — emails restored to inbox by the user are never re-actioned. The stable `internetMessageId` header is used as the DB key; Graph's folder-scoped `id` is used only for API move/delete calls. Graph accounts (financial, personal) send both IDs; Gmail IDs were already stable.
+- **DB auto-pruning** — `prune_old_records(days=90)` runs after every full poll cycle (all three accounts). Deletes non-pending `action_log` records older than 90 days. `sender_rules` table is exempt. Logged at INFO level when records are deleted.
+- **Sender classification rules** — `sender_rules` table stores one rule per sender email address. Learned rules (source='learned') strengthen on consistent LLM results and fire at count ≥ 2; conflicting results decay the count; eroded to zero deletes the rule. Manual rules (source='manual') fire immediately and are never overwritten by LLM data — only by another manual reclassify or explicit deletion. Created automatically when a user reclassifies an email via the UI.
+- **Sender rule management endpoints** — `GET /api/sender-rules` lists all rules; `DELETE /api/sender-rules/{sender}` (URL-encode `@` as `%40`) clears one rule; `DELETE /api/sender-rules` clears all rules.
+- **Sender Rules UI** — Settings panel has a new "Sender Rules" section (between AI & Voice and Account Configuration). Shows a table: sender address, classification badge, type badge (learned/manual), count (`—` for manual), last seen date, Delete button per row. Clear All Rules button at the bottom. Refreshes automatically on entering Settings. Loaded via `loadSenderRules()` called from `setMode('settings')`.
+
 **Next session — start here:**
 1. `email-agent start`
 2. Confirm dashboard at `http://***TAILSCALE_IP***:8000`
@@ -386,6 +412,7 @@ Today's goal: [one sentence]
 
 **Known issues:**
 - `GEMINI_API_KEY` not yet set (deferred)
+- Gmail sender rules less reliable — `poll_gmail` stores the raw `from` header (e.g. `"Acme Newsletter <news@acme.com>"`) as the rule key. If the display name varies across emails from the same sender address, they create separate rules. Graph accounts extract just the email address and are not affected.
 
 **All files:**
 - `~/email-agent/email-agent` (also `/opt/homebrew/bin/email-agent`)
@@ -424,6 +451,9 @@ Today's goal: [one sentence]
 - Personal account inbox filter shows with yellow dot in sidebar. Account label is `personal` in SQLite.
 - `get_queue(history_limit=500)` signature: pending fetched with no LIMIT clause; history fetched with `LIMIT history_limit`. Do not pass a `limit` keyword — the old param is gone.
 - `filing_history` table: `(sender_domain, target_folder_id)` unique index. `record_filing()` upserts and increments count. `get_filing_suggestions(sender_domain, limit=5)` returns top targets ordered by count DESC.
+- **Stable email ID (Graph accounts):** `get_emails()` in `graph.py` requests `internetMessageId` in `$select`. In `poll_financial` and `poll_personal`: `stable_id = email.get("internetMessageId") or graph_id` is stored in `action_log.email_id` and used for all DB operations; `graph_id = email.get("id")` is passed to `execute_action` and all move/delete API calls. This means user overrides survive the email being moved and restored — the stable_id never changes.
+- **DB pruning:** `prune_old_records(days=90)` in `db/database.py` deletes `action_log` records WHERE `status != 'pending' AND timestamp < cutoff`. Called from `poll_all()` after all three pollers complete. Does not touch `sender_rules`, `sent_examples`, `voice_profiles`, `filing_history`, or `settings`.
+- **`sender_rules` table:** `sender TEXT PRIMARY KEY, classification TEXT, count INTEGER, source TEXT ('learned'|'manual'), created_at TEXT, last_seen TEXT`. Never pruned. `upsert_sender_rule(sender, classification, source)`: if source='manual' always overwrites; if source='learned' — same classification increments count, different classification on a learned rule decrements count (deletes at 0), different classification on a manual rule only updates last_seen. `get_sender_rule(sender)` returns the row or None. In each poller: check rule before LLM; if `rule['source']=='manual' or rule['count']>=2` use rule and skip LLM (also skip upsert); otherwise run LLM and call `upsert_sender_rule` with the result. Classifications of 'error' or 'unknown' are never stored as rules. `POST /api/email/{id}/reclassify` also calls `upsert_sender_rule(..., source='manual')` using the email's sender from DB.
 - `graph.list_folders(account)` — fetches `mailFolders?$expand=childFolders`, returns flat list including one level of subfolders as "Parent / Child". Sorted alphabetically.
 - `gmail.list_labels()` — returns user-created labels only; excludes all `_GMAIL_SYSTEM_LABELS` and any `CATEGORY_` prefixed IDs.
 - `graph.file_to_folder(account, email_id, folder_id)` and `gmail.file_to_label(email_id, label_id)` — move by ID directly, no name lookup. Distinct from `move_email()` which takes a folder name and creates if missing.
