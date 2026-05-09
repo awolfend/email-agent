@@ -1,0 +1,2053 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Email Agent</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        :root {
+            --bg: #0f1117;
+            --surface: #1a1d27;
+            --surface2: #22263a;
+            --border: #2e3350;
+            --accent: #4f7cff;
+            --green: #22c55e;
+            --red: #ef4444;
+            --yellow: #f59e0b;
+            --purple: #a855f7;
+            --teal: #14b8a6;
+            --grey: #6b7280;
+            --text: #e2e8f0;
+            --text-dim: #94a3b8;
+            --text-dimmer: #64748b;
+        }
+
+        body {
+            background: var(--bg);
+            color: var(--text);
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            font-size: 13px;
+            display: flex;
+            height: 100vh;
+            overflow: hidden;
+            user-select: none;
+        }
+
+        #sidebar {
+            width: 220px;
+            min-width: 140px;
+            max-width: 340px;
+            background: var(--surface);
+            border-right: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            padding: 16px 0;
+            flex-shrink: 0;
+        }
+
+        #sidebar h1 {
+            font-size: 14px;
+            font-weight: 700;
+            letter-spacing: 0.05em;
+            color: var(--accent);
+            padding: 0 16px 12px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .mode-toggle {
+            display: flex;
+            margin: 10px 8px 4px;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            overflow: hidden;
+        }
+        .mode-btn {
+            flex: 1;
+            padding: 5px 0;
+            background: transparent;
+            border: none;
+            color: var(--text-dim);
+            cursor: pointer;
+            font-size: 11px;
+            font-weight: 600;
+            transition: all 0.15s;
+            text-align: center;
+        }
+        .mode-btn:hover { color: var(--text); background: var(--surface2); }
+        .mode-btn.active { background: var(--accent); color: white; }
+
+        .sidebar-section {
+            padding: 10px 16px 4px;
+            font-size: 10px;
+            font-weight: 700;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            color: var(--text-dimmer);
+        }
+
+        .stat-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 5px 16px;
+            color: var(--text-dim);
+            cursor: pointer;
+            border-radius: 4px;
+            margin: 0 8px;
+        }
+        .stat-row:hover { background: var(--surface2); color: var(--text); }
+        .stat-row.active { background: var(--surface2); color: var(--accent); }
+        .stat-row .label { display: flex; align-items: center; gap: 6px; }
+
+        .stat-badge {
+            background: var(--surface2);
+            color: var(--text-dim);
+            border-radius: 10px;
+            padding: 1px 7px;
+            font-size: 11px;
+            font-weight: 600;
+        }
+
+        .dot { width: 7px; height: 7px; border-radius: 50%; }
+        .dot-action { background: var(--accent); }
+        .dot-fyi { background: var(--green); }
+        .dot-newsletter { background: var(--grey); }
+        .dot-notification { background: var(--yellow); }
+        .dot-spam { background: var(--red); }
+        .dot-calendar { background: var(--purple); }
+        .dot-unknown { background: var(--text-dimmer); }
+
+        .poll-btn {
+            margin: 8px 12px 4px;
+            padding: 7px;
+            background: var(--surface2);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--text-dim);
+            cursor: pointer;
+            text-align: center;
+            font-size: 11px;
+            transition: all 0.15s;
+        }
+        .poll-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+        .clear-btn {
+            margin: 4px 12px 12px;
+            padding: 7px;
+            background: var(--surface2);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--red);
+            cursor: pointer;
+            text-align: center;
+            font-size: 11px;
+            transition: all 0.15s;
+        }
+        .clear-btn:hover { border-color: var(--red); background: rgba(239,68,68,0.08); }
+
+        .resizer {
+            width: 5px;
+            background: var(--border);
+            cursor: col-resize;
+            flex-shrink: 0;
+            transition: background 0.15s;
+            z-index: 10;
+        }
+        .resizer:hover, .resizer.dragging { background: var(--accent); }
+
+        .resizer-h {
+            height: 5px;
+            background: var(--border);
+            cursor: row-resize;
+            flex-shrink: 0;
+            transition: background 0.15s;
+        }
+        .resizer-h:hover, .resizer-h.dragging { background: var(--accent); }
+
+        #queue-panel {
+            width: 380px;
+            min-width: 240px;
+            max-width: 600px;
+            background: var(--surface);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            flex-shrink: 0;
+        }
+
+        #queue-header {
+            padding: 10px 12px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+            flex-shrink: 0;
+        }
+        #queue-header h2 { font-size: 13px; font-weight: 600; white-space: nowrap; }
+
+        .sort-toggle {
+            display: flex;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            overflow: hidden;
+        }
+        .sort-btn {
+            padding: 4px 10px;
+            background: transparent;
+            border: none;
+            color: var(--text-dim);
+            cursor: pointer;
+            font-size: 11px;
+            transition: all 0.15s;
+            white-space: nowrap;
+        }
+        .sort-btn:hover { color: var(--text); background: var(--surface2); }
+        .sort-btn.active { background: var(--accent); color: white; }
+
+        #history-tabs {
+            display: none;
+            gap: 4px;
+            padding: 8px 12px;
+            border-bottom: 1px solid var(--border);
+            flex-shrink: 0;
+        }
+        .history-tab {
+            padding: 3px 10px;
+            border-radius: 12px;
+            border: 1px solid var(--border);
+            background: transparent;
+            color: var(--text-dim);
+            cursor: pointer;
+            font-size: 11px;
+            transition: all 0.15s;
+        }
+        .history-tab:hover { border-color: var(--accent); color: var(--accent); }
+        .history-tab.active { background: var(--accent); border-color: var(--accent); color: white; }
+
+        #queue-list { overflow-y: auto; flex: 1; min-height: 0; }
+
+        .email-item {
+            padding: 11px 14px;
+            border-bottom: 1px solid var(--border);
+            cursor: pointer;
+            transition: background 0.1s;
+            border-left: 3px solid transparent;
+        }
+        .email-item:hover { background: var(--surface2); }
+        .email-item.selected { background: var(--surface2); border-left-color: var(--accent); }
+        .email-item.flagged-item { border-left-color: var(--yellow); }
+        .email-item.selected { border-left-color: var(--accent); }
+        .email-item.stub-item { border-left-color: var(--purple); opacity: 0.85; }
+
+        .email-item-top {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 3px;
+        }
+        .email-sender {
+            font-weight: 600;
+            font-size: 12px;
+            color: var(--text);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            max-width: 200px;
+        }
+        .email-time { font-size: 10px; color: var(--text-dimmer); white-space: nowrap; }
+        .email-subject {
+            color: var(--text-dim);
+            font-size: 12px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            margin-bottom: 5px;
+        }
+        .email-meta { display: flex; gap: 6px; align-items: center; }
+
+        .tag {
+            padding: 1px 7px;
+            border-radius: 10px;
+            font-size: 10px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.03em;
+        }
+        .tag-action_required { background: rgba(79,124,255,0.15); color: var(--accent); }
+        .tag-fyi { background: rgba(34,197,94,0.15); color: var(--green); }
+        .tag-newsletter { background: rgba(107,114,128,0.15); color: var(--grey); }
+        .tag-notification { background: rgba(245,158,11,0.15); color: var(--yellow); }
+        .tag-spam { background: rgba(239,68,68,0.15); color: var(--red); }
+        .tag-calendar { background: rgba(168,85,247,0.15); color: var(--purple); }
+        .tag-unknown, .tag-error { background: rgba(100,116,139,0.15); color: var(--text-dimmer); }
+        .tag-stub { background: rgba(168,85,247,0.15); color: var(--purple); }
+
+        .account-tag { font-size: 10px; color: var(--text-dimmer); }
+
+        #detail-panel {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            min-width: 300px;
+            min-height: 0;
+        }
+
+        #detail-header {
+            padding: 14px 20px;
+            border-bottom: 1px solid var(--border);
+            flex-shrink: 0;
+        }
+        #detail-header h2 { font-size: 15px; font-weight: 600; line-height: 1.4; }
+
+        #detail-meta {
+            padding: 10px 20px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            gap: 16px;
+            flex-wrap: wrap;
+            flex-shrink: 0;
+        }
+        .meta-item { display: flex; flex-direction: column; gap: 2px; }
+        .meta-label { font-size: 10px; color: var(--text-dimmer); text-transform: uppercase; letter-spacing: 0.05em; }
+        .meta-value { font-size: 12px; color: var(--text); }
+
+        #action-bar {
+            padding: 10px 20px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            flex-wrap: wrap;
+            flex-shrink: 0;
+        }
+
+        .action-btn {
+            padding: 6px 14px;
+            border-radius: 6px;
+            border: 1px solid var(--border);
+            background: var(--surface2);
+            color: var(--text);
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: 500;
+            transition: all 0.15s;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+        .action-btn:hover { border-color: var(--accent); color: var(--accent); }
+        .action-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+        .action-btn:disabled:hover { border-color: var(--border); color: var(--text); }
+        .action-btn.send { border-color: var(--green); color: var(--green); }
+        .action-btn.send:hover { background: rgba(34,197,94,0.1); }
+        .action-btn.reply { border-color: var(--accent); color: var(--accent); }
+        .action-btn.reply:hover { background: rgba(79,124,255,0.1); }
+        .action-btn.archive { border-color: var(--grey); color: var(--grey); }
+        .action-btn.archive:hover { background: rgba(107,114,128,0.15); border-color: var(--text); color: var(--text); }
+        .action-btn.file { border-color: var(--teal); color: var(--teal); }
+        .action-btn.file:hover { background: rgba(20,184,166,0.1); }
+        .action-btn.delete { border-color: var(--red); color: var(--red); }
+        .action-btn.delete:hover { background: rgba(239,68,68,0.2); }
+        .action-btn.flag { border-color: var(--yellow); color: var(--yellow); }
+        .action-btn.flag:hover { background: rgba(245,158,11,0.1); }
+        .action-btn.draft-btn { border-color: var(--purple); color: var(--purple); }
+        .action-btn.draft-btn:hover { background: rgba(168,85,247,0.1); }
+        .action-btn.restore { border-color: var(--purple); color: var(--purple); }
+        .action-btn.restore:hover { background: rgba(168,85,247,0.1); }
+
+        .reclassify-select {
+            padding: 6px 10px;
+            border-radius: 6px;
+            border: 1px solid var(--border);
+            background: var(--surface2);
+            color: var(--text);
+            font-size: 12px;
+            cursor: pointer;
+        }
+
+        #detail-body {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            min-height: 0;
+        }
+
+        #email-body-section {
+            padding: 16px 20px;
+            overflow-y: auto;
+            min-height: 60px;
+            flex: 1;
+        }
+
+        #email-body-content {
+            color: var(--text-dim);
+            line-height: 1.7;
+            font-size: 13px;
+            white-space: pre-wrap;
+            word-break: break-word;
+            user-select: text;
+        }
+
+        #draft-section {
+            display: flex;
+            flex-direction: column;
+            padding: 12px 20px;
+            border-top: 1px solid var(--border);
+            gap: 8px;
+            height: 300px;
+            min-height: 120px;
+            flex-shrink: 0;
+            overflow: hidden;
+        }
+
+        #draft-section-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-shrink: 0;
+        }
+        #draft-section-header span {
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--text-dimmer);
+        }
+
+        #draft-to-bar {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-shrink: 0;
+            background: var(--surface2);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 5px 10px;
+        }
+        #draft-to-bar label {
+            font-size: 11px;
+            color: var(--text-dimmer);
+            white-space: nowrap;
+            font-weight: 600;
+        }
+        #draft-to-input {
+            flex: 1;
+            background: transparent;
+            border: none;
+            color: var(--text);
+            font-size: 12px;
+            font-family: inherit;
+            padding: 0;
+        }
+        #draft-to-input:focus { outline: none; }
+
+        #draft-reply {
+            width: 100%;
+            background: var(--surface2);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--text);
+            font-size: 13px;
+            padding: 10px 12px;
+            resize: none;
+            flex: 1;
+            font-family: inherit;
+            line-height: 1.6;
+            transition: border-color 0.15s;
+            user-select: text;
+            overflow-y: auto;
+            min-height: 0;
+        }
+        #draft-reply:focus { outline: none; border-color: var(--accent); }
+        .draft-actions { display: flex; gap: 8px; flex-shrink: 0; }
+
+        #draft-guidance-bar {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            flex-shrink: 0;
+        }
+        #draft-guidance-input {
+            flex: 1;
+            background: var(--surface2);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--text);
+            font-size: 12px;
+            padding: 6px 10px;
+            font-family: inherit;
+            transition: border-color 0.15s;
+        }
+        #draft-guidance-input:focus { outline: none; border-color: var(--purple); }
+        #draft-guidance-input::placeholder { color: var(--text-dimmer); }
+
+        #followup-to-bar {
+            display: none;
+            padding: 6px 20px;
+            border-bottom: 1px solid var(--border);
+            align-items: center;
+            gap: 8px;
+            flex-shrink: 0;
+            background: var(--surface2);
+        }
+        #followup-to-bar label { font-size: 11px; color: var(--text-dimmer); white-space: nowrap; }
+        #followup-to-input {
+            flex: 1;
+            background: transparent;
+            border: none;
+            border-bottom: 1px solid var(--border);
+            color: var(--text);
+            font-size: 12px;
+            padding: 2px 4px;
+            font-family: inherit;
+        }
+        #followup-to-input:focus { outline: none; border-bottom-color: var(--accent); }
+
+        .stub-notice {
+            margin: 10px 20px 0;
+            padding: 8px 12px;
+            background: rgba(168,85,247,0.1);
+            border: 1px solid rgba(168,85,247,0.3);
+            border-radius: 6px;
+            font-size: 11px;
+            color: var(--purple);
+            flex-shrink: 0;
+        }
+
+        #empty-state {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            color: var(--text-dimmer);
+            gap: 8px;
+        }
+        #empty-state .icon { font-size: 36px; }
+
+        #toast {
+            position: fixed;
+            bottom: 24px;
+            right: 24px;
+            background: var(--surface2);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 10px 16px;
+            font-size: 13px;
+            color: var(--text);
+            opacity: 0;
+            transition: opacity 0.2s;
+            z-index: 100;
+            pointer-events: none;
+        }
+        #toast.show { opacity: 1; }
+
+        .overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.6);
+            z-index: 200;
+            align-items: center;
+            justify-content: center;
+        }
+        .overlay.show { display: flex; }
+        .overlay-box {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 24px;
+            max-width: 380px;
+            width: 90%;
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+        }
+        .overlay-box h3 { font-size: 14px; font-weight: 600; }
+        .overlay-box p { font-size: 12px; color: var(--text-dim); line-height: 1.5; }
+        .overlay-actions { display: flex; gap: 8px; justify-content: flex-end; }
+
+        ::-webkit-scrollbar { width: 5px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: var(--text-dimmer); }
+
+        .file-search-input {
+            width: 100%;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--text);
+            font-size: 13px;
+            padding: 8px 12px;
+            font-family: inherit;
+            box-sizing: border-box;
+        }
+        .file-search-input:focus { outline: none; border-color: var(--accent); }
+        .file-section-label {
+            font-size: 10px;
+            font-weight: 700;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            color: var(--text-dimmer);
+            padding: 10px 4px 4px;
+        }
+        .file-folder-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 7px 10px;
+            border-radius: 6px;
+            cursor: pointer;
+            color: var(--text-dim);
+            font-size: 12px;
+            transition: background 0.1s;
+        }
+        .file-folder-item:hover { background: var(--surface2); color: var(--text); }
+        .file-folder-count {
+            font-size: 10px;
+            color: var(--text-dimmer);
+            background: var(--surface2);
+            border-radius: 8px;
+            padding: 1px 7px;
+            flex-shrink: 0;
+        }
+        #file-folder-list { overflow-y: auto; flex: 1; min-height: 0; padding-bottom: 4px; }
+
+        .confidence-bar { height: 3px; background: var(--border); border-radius: 2px; margin-top: 4px; overflow: hidden; }
+        .confidence-fill { height: 100%; border-radius: 2px; background: var(--accent); }
+        .generating { opacity: 0.6; font-style: italic; }
+
+        #settings-panel {
+            display: none;
+            flex: 1;
+            flex-direction: column;
+            overflow-y: auto;
+            padding: 32px 40px;
+            gap: 32px;
+            min-width: 0;
+        }
+        .settings-page-title {
+            font-size: 18px;
+            font-weight: 700;
+            color: var(--text);
+            padding-bottom: 16px;
+            border-bottom: 1px solid var(--border);
+        }
+        .settings-section {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+        .settings-section-title {
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            color: var(--text-dimmer);
+        }
+        .settings-card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 20px 24px;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+        .settings-card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 16px;
+        }
+        .settings-card-title {
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--text);
+        }
+        .settings-card-desc {
+            font-size: 12px;
+            color: var(--text-dim);
+            line-height: 1.6;
+            max-width: 560px;
+        }
+        .voice-accounts {
+            display: flex;
+            gap: 12px;
+        }
+        .voice-account-card {
+            flex: 1;
+            background: var(--surface2);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 14px 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+        .voice-account-name {
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--text);
+        }
+        .voice-status-built {
+            font-size: 11px;
+            color: var(--green);
+        }
+        .voice-status-empty {
+            font-size: 11px;
+            color: var(--text-dimmer);
+        }
+        .voice-meta {
+            font-size: 10px;
+            color: var(--text-dimmer);
+        }
+        .settings-build-btn {
+            padding: 8px 20px;
+            background: var(--surface2);
+            border: 1px solid var(--accent);
+            border-radius: 6px;
+            color: var(--accent);
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: 600;
+            transition: all 0.15s;
+            align-self: flex-start;
+        }
+        .settings-build-btn:hover { background: rgba(79,124,255,0.1); }
+        .settings-build-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .settings-field { display: flex; flex-direction: column; }
+        .settings-label {
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--text-dim);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 6px;
+        }
+        .settings-textarea {
+            width: 100%;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--text);
+            font-family: inherit;
+            font-size: 12px;
+            padding: 8px 10px;
+            resize: vertical;
+            box-sizing: border-box;
+            line-height: 1.6;
+        }
+        .settings-textarea:focus { outline: none; border-color: var(--accent); }
+    </style>
+</head>
+<body>
+
+<div id="sidebar">
+    <h1>⚡ Email Agent</h1>
+
+    <div class="mode-toggle">
+        <button class="mode-btn active" id="mode-inbox" onclick="setMode('inbox')">📬 Inbox</button>
+        <button class="mode-btn" id="mode-history" onclick="setMode('history')">🕐 History</button>
+        <button class="mode-btn" id="mode-settings" onclick="setMode('settings')">⚙</button>
+    </div>
+
+    <div class="sidebar-section">Accounts</div>
+    <div class="stat-row active" onclick="filterAccount('all')" id="acct-all">
+        <span class="label"><span class="dot" style="background:var(--text-dim)"></span>All Accounts</span>
+        <span class="stat-badge" id="stat-acct-all">0</span>
+    </div>
+    <div class="stat-row" onclick="filterAccount('financial')" id="acct-financial">
+        <span class="label"><span class="dot" style="background:var(--accent)"></span>Financial Planning</span>
+        <span class="stat-badge" id="stat-financial">0</span>
+    </div>
+    <div class="stat-row" onclick="filterAccount('gmail')" id="acct-gmail">
+        <span class="label"><span class="dot" style="background:var(--green)"></span>Positive Tax</span>
+        <span class="stat-badge" id="stat-gmail">0</span>
+    </div>
+    <div class="stat-row" onclick="filterAccount('personal')" id="acct-personal">
+        <span class="label"><span class="dot" style="background:var(--yellow,#f0b429)"></span>Personal</span>
+        <span class="stat-badge" id="stat-personal">0</span>
+    </div>
+
+    <div id="inbox-sidebar-section">
+        <div class="sidebar-section">Classifications</div>
+        <div class="stat-row active" onclick="filterClass('all')" id="filter-all">
+            <span class="label"><span class="dot" style="background:var(--text-dim)"></span>All</span>
+            <span class="stat-badge" id="stat-all">0</span>
+        </div>
+        <div class="stat-row" onclick="filterClass('action_required')" id="filter-action_required">
+            <span class="label"><span class="dot dot-action"></span>Action Required</span>
+            <span class="stat-badge" id="stat-action_required">0</span>
+        </div>
+        <div class="stat-row" onclick="filterClass('calendar')" id="filter-calendar">
+            <span class="label"><span class="dot dot-calendar"></span>Calendar</span>
+            <span class="stat-badge" id="stat-calendar">0</span>
+        </div>
+        <div class="stat-row" onclick="filterClass('fyi')" id="filter-fyi">
+            <span class="label"><span class="dot dot-fyi"></span>FYI</span>
+            <span class="stat-badge" id="stat-fyi">0</span>
+        </div>
+        <div class="stat-row" onclick="filterClass('notification')" id="filter-notification">
+            <span class="label"><span class="dot dot-notification"></span>Notifications</span>
+            <span class="stat-badge" id="stat-notification">0</span>
+        </div>
+        <div class="stat-row" onclick="filterClass('newsletter')" id="filter-newsletter">
+            <span class="label"><span class="dot dot-newsletter"></span>Newsletters</span>
+            <span class="stat-badge" id="stat-newsletter">0</span>
+        </div>
+        <div class="stat-row" onclick="filterClass('spam')" id="filter-spam">
+            <span class="label"><span class="dot dot-spam"></span>Spam</span>
+            <span class="stat-badge" id="stat-spam">0</span>
+        </div>
+    </div>
+
+    <div style="flex:1"></div>
+    <div class="poll-btn" onclick="triggerPoll()">⟳ Poll Now</div>
+    <div class="clear-btn" id="clear-btn" style="display:none;" onclick="confirmClearHistory()">🗑 Clear History</div>
+</div>
+
+<div class="resizer" id="resizer-1"></div>
+
+<div id="queue-panel">
+    <div id="queue-header">
+        <h2 id="queue-title">Inbox</h2>
+        <span style="color:var(--text-dimmer);font-size:11px;white-space:nowrap;" id="queue-count">0 items</span>
+        <div class="sort-toggle">
+            <button class="sort-btn active" id="sort-btn-classification" onclick="setSort('classification')">⬆ Priority</button>
+            <button class="sort-btn" id="sort-btn-date" onclick="setSort('date')">↓ Newest</button>
+        </div>
+    </div>
+    <div id="history-tabs">
+        <button class="history-tab active" onclick="setHistoryTab('sent', this)">✉️ Sent</button>
+        <button class="history-tab" onclick="setHistoryTab('archived', this)">⬇ Archived</button>
+        <button class="history-tab" onclick="setHistoryTab('filed', this)">📁 Filed</button>
+        <button class="history-tab" onclick="setHistoryTab('deleted', this)">🗑 Deleted</button>
+        <button class="history-tab" onclick="setHistoryTab('all', this)">All</button>
+    </div>
+    <div id="queue-list"></div>
+</div>
+
+<div class="resizer" id="resizer-2"></div>
+
+<div id="detail-panel">
+    <div id="empty-state">
+        <div class="icon">📬</div>
+        <p id="empty-msg">Select an email to review</p>
+    </div>
+
+    <div id="email-detail" style="display:none; flex-direction:column; flex:1; overflow:hidden; min-height:0;">
+        <div id="detail-header">
+            <h2 id="detail-subject"></h2>
+        </div>
+        <div id="stub-notice" class="stub-notice" style="display:none;">
+            ⚠️ Stub record — original email was deleted from mailbox. Body shown is from agent snapshot.
+        </div>
+        <div id="detail-meta">
+            <div class="meta-item">
+                <span class="meta-label">From</span>
+                <span class="meta-value" id="detail-sender"></span>
+            </div>
+            <div class="meta-item">
+                <span class="meta-label">Account</span>
+                <span class="meta-value" id="detail-account"></span>
+            </div>
+            <div class="meta-item">
+                <span class="meta-label">Received</span>
+                <span class="meta-value" id="detail-time"></span>
+            </div>
+            <div class="meta-item">
+                <span class="meta-label">Classification</span>
+                <span class="meta-value" id="detail-classification"></span>
+            </div>
+            <div class="meta-item">
+                <span class="meta-label">Confidence</span>
+                <span class="meta-value" id="detail-confidence"></span>
+                <div class="confidence-bar"><div class="confidence-fill" id="detail-confidence-bar"></div></div>
+            </div>
+        </div>
+
+        <div id="followup-to-bar">
+            <label>To:</label>
+            <input type="text" id="followup-to-input" placeholder="recipient@example.com" />
+        </div>
+
+        <div id="action-bar"></div>
+
+        <div id="detail-body">
+            <div id="email-body-section">
+                <div id="email-body-content"></div>
+            </div>
+            <div class="resizer-h" id="resizer-v" style="display:none;"></div>
+            <div id="draft-section" style="display:none;">
+                <div id="draft-section-header">
+                    <span>✏️ Draft Reply</span>
+                    <div class="draft-actions">
+                        <button class="action-btn" onclick="saveDraft()" style="font-size:11px;padding:4px 10px;">💾 Save</button>
+                        <button class="action-btn" onclick="clearDraftPanel()" style="font-size:11px;padding:4px 10px;">✕ Clear</button>
+                    </div>
+                </div>
+                <div id="draft-to-bar">
+                    <label>To:</label>
+                    <input type="text" id="draft-to-input" placeholder="recipient@example.com" />
+                </div>
+                <textarea id="draft-reply" placeholder="Click 'Generate Draft' or type your own reply..."></textarea>
+                <div id="draft-guidance-bar">
+                    <input type="text" id="draft-guidance-input" placeholder="Instructions for (re)generation — e.g. make it shorter, add note about PAYG..." />
+                    <button class="action-btn draft-btn" id="btn-generate-draft" onclick="generateDraft()" style="font-size:11px;padding:6px 12px;white-space:nowrap;">✏️ Generate</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div id="settings-panel">
+    <div class="settings-page-title">Settings</div>
+
+    <div class="settings-section">
+        <div class="settings-section-title">AI &amp; Voice</div>
+        <div class="settings-card">
+            <div class="settings-card-header">
+                <div>
+                    <div class="settings-card-title">Voice Profile</div>
+                    <div class="settings-card-desc" style="margin-top:6px;">
+                        Analyses your sent emails from the past 90 days and builds a writing style profile.
+                        The profile is injected into every draft to calibrate tone, sentence structure, and vocabulary to match your voice.
+                        Re-run after several months to incorporate newer sent emails.
+                    </div>
+                </div>
+            </div>
+            <div class="voice-accounts">
+                <div class="voice-account-card">
+                    <div class="voice-account-name">💼 Financial Planning</div>
+                    <div id="voice-status-financial" class="voice-status-empty">Not built</div>
+                    <div id="voice-meta-financial" class="voice-meta"></div>
+                </div>
+                <div class="voice-account-card">
+                    <div class="voice-account-name">📧 Positive Tax</div>
+                    <div id="voice-status-gmail" class="voice-status-empty">Not built</div>
+                    <div id="voice-meta-gmail" class="voice-meta"></div>
+                </div>
+                <div class="voice-account-card">
+                    <div class="voice-account-name">🏠 Personal</div>
+                    <div id="voice-status-personal" class="voice-status-empty">Not built</div>
+                    <div id="voice-meta-personal" class="voice-meta"></div>
+                </div>
+            </div>
+            <div style="display:flex;gap:10px;align-items:center;">
+                <button class="settings-build-btn" id="btn-build-voice" onclick="buildVoiceProfile()">
+                    🎤 Build Voice Profile
+                </button>
+                <button class="settings-build-btn" style="border-color:var(--border);color:var(--text-dim);" onclick="loadVoiceStatus();showToast('Status refreshed');">
+                    ↻ Refresh Status
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <div class="settings-section">
+        <div class="settings-section-title">Account Configuration</div>
+
+        <div class="settings-card">
+            <div class="settings-card-header">
+                <div>
+                    <div class="settings-card-title">💼 Financial Planning (Intertek)</div>
+                    <div class="settings-card-desc" style="margin-top:6px;">
+                        Base drafting instructions and email footer for the Intertek Financial Planning account.
+                        The base prompt defines tone, style, and compliance rules. The footer is appended to every draft.
+                    </div>
+                </div>
+            </div>
+            <div class="settings-field" style="margin-top:12px;">
+                <div class="settings-label">Base prompt</div>
+                <textarea id="prompt-financial" class="settings-textarea" rows="12" spellcheck="false"></textarea>
+            </div>
+            <div class="settings-field" style="margin-top:12px;">
+                <div class="settings-label">Email footer / signature</div>
+                <textarea id="footer-financial" class="settings-textarea" rows="6" spellcheck="false"></textarea>
+            </div>
+            <div style="margin-top:12px;">
+                <button class="settings-build-btn" onclick="saveAccountSettings('financial')">💾 Save Financial Settings</button>
+            </div>
+        </div>
+
+        <div class="settings-card" style="margin-top:16px;">
+            <div class="settings-card-header">
+                <div>
+                    <div class="settings-card-title">🏠 Personal (anthony@wolfenden.net)</div>
+                    <div class="settings-card-desc" style="margin-top:6px;">
+                        Base drafting instructions and email footer for the personal email account.
+                    </div>
+                </div>
+            </div>
+            <div class="settings-field" style="margin-top:12px;">
+                <div class="settings-label">Base prompt</div>
+                <textarea id="prompt-personal" class="settings-textarea" rows="12" spellcheck="false"></textarea>
+            </div>
+            <div class="settings-field" style="margin-top:12px;">
+                <div class="settings-label">Email footer / signature</div>
+                <textarea id="footer-personal" class="settings-textarea" rows="6" spellcheck="false"></textarea>
+            </div>
+            <div style="margin-top:12px;">
+                <button class="settings-build-btn" onclick="saveAccountSettings('personal')">💾 Save Personal Settings</button>
+            </div>
+        </div>
+
+        <div class="settings-card" style="margin-top:16px;">
+            <div class="settings-card-header">
+                <div>
+                    <div class="settings-card-title">📧 Positive Tax Solutions</div>
+                    <div class="settings-card-desc" style="margin-top:6px;">
+                        Base drafting instructions and email footer for the Positive Tax Solutions account.
+                        The base prompt defines tone, style, and compliance rules. The footer is appended to every draft.
+                    </div>
+                </div>
+            </div>
+            <div class="settings-field" style="margin-top:12px;">
+                <div class="settings-label">Base prompt</div>
+                <textarea id="prompt-gmail" class="settings-textarea" rows="12" spellcheck="false"></textarea>
+            </div>
+            <div class="settings-field" style="margin-top:12px;">
+                <div class="settings-label">Email footer / signature</div>
+                <textarea id="footer-gmail" class="settings-textarea" rows="6" spellcheck="false"></textarea>
+            </div>
+            <div style="margin-top:12px;">
+                <button class="settings-build-btn" onclick="saveAccountSettings('gmail')">💾 Save Tax Settings</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Clear history overlay -->
+<div class="overlay" id="clear-overlay">
+    <div class="overlay-box">
+        <h3 style="color:var(--red);">🗑 Clear history?</h3>
+        <p>Removes records from the agent only. Does not affect your mailbox.</p>
+        <div style="display:flex;flex-direction:column;gap:6px;">
+            <button class="action-btn" onclick="executeClear('sent')" style="justify-content:flex-start;">Clear Sent history</button>
+            <button class="action-btn" onclick="executeClear('archived')" style="justify-content:flex-start;">Clear Archived history</button>
+            <button class="action-btn" onclick="executeClear('deleted')" style="justify-content:flex-start;">Clear Deleted history</button>
+            <button class="action-btn delete" onclick="executeClear('all')" style="justify-content:flex-start;">Clear all history</button>
+        </div>
+        <div class="overlay-actions">
+            <button class="action-btn" onclick="cancelClear()">Cancel</button>
+        </div>
+    </div>
+</div>
+
+<!-- File picker overlay -->
+<div class="overlay" id="file-overlay">
+    <div class="overlay-box" style="max-width:520px;width:95%;max-height:80vh;padding:20px;gap:10px;overflow:hidden;">
+        <h3>📁 File Email</h3>
+        <input type="text" class="file-search-input" id="file-search" placeholder="Search folders…" oninput="filterFolders(this.value)" />
+        <div id="file-folder-list" style="overflow-y:auto;flex:1;min-height:120px;"></div>
+        <div class="overlay-actions">
+            <button class="action-btn" onclick="cancelFile()">Cancel</button>
+        </div>
+    </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+    let allEmails = [];
+    let currentEmail = null;
+    let currentMode = 'inbox';
+    let currentAccountFilter = 'all';
+    let currentClassFilter = 'all';
+    let currentHistoryTab = 'sent';
+    let currentSort = 'classification';
+    let sortDirs = { classification: 'asc', date: 'desc' };
+    let draftVisible = false;
+    let cachedFolders = null;
+    let fileSuggestions = [];
+    let currentFileEmailId = null;
+
+    const priorityOrder = {
+        action_required: 1, calendar: 2, fyi: 3,
+        notification: 4, newsletter: 5, spam: 6, unknown: 7, error: 8
+    };
+
+    // ---- Mode ----
+
+    function setMode(mode) {
+        currentMode = mode;
+        currentEmail = null;
+
+        const isSettings = mode === 'settings';
+        document.getElementById('queue-panel').style.display = isSettings ? 'none' : '';
+        document.getElementById('resizer-2').style.display = isSettings ? 'none' : '';
+        document.getElementById('detail-panel').style.display = isSettings ? 'none' : 'flex';
+        document.getElementById('settings-panel').style.display = isSettings ? 'flex' : 'none';
+
+        document.getElementById('mode-inbox').classList.toggle('active', mode === 'inbox');
+        document.getElementById('mode-history').classList.toggle('active', mode === 'history');
+        document.getElementById('mode-settings').classList.toggle('active', mode === 'settings');
+
+        if (!isSettings) {
+            document.getElementById('empty-state').style.display = 'flex';
+            document.getElementById('email-detail').style.display = 'none';
+            document.getElementById('empty-msg').textContent = 'Select an email to review';
+            document.getElementById('inbox-sidebar-section').style.display = mode === 'inbox' ? '' : 'none';
+            document.getElementById('history-tabs').style.display = mode === 'history' ? 'flex' : 'none';
+            document.getElementById('clear-btn').style.display = mode === 'history' ? '' : 'none';
+            document.getElementById('queue-title').textContent = mode === 'inbox' ? 'Inbox' : 'History';
+            renderQueue();
+            updateClassificationCounts();
+        } else {
+            document.getElementById('inbox-sidebar-section').style.display = 'none';
+            document.getElementById('clear-btn').style.display = 'none';
+            loadVoiceStatus();
+            loadSettings();
+        }
+    }
+
+    // ---- Filters ----
+
+    function filterAccount(account) {
+        currentAccountFilter = account;
+        document.querySelectorAll('[id^="acct-"]').forEach(r => r.classList.remove('active'));
+        document.getElementById(`acct-${account}`).classList.add('active');
+        updateClassificationCounts();
+        renderQueue();
+    }
+
+    function filterClass(classification) {
+        currentClassFilter = classification;
+        document.querySelectorAll('.stat-row[id^="filter-"]').forEach(r => r.classList.remove('active'));
+        const el = document.getElementById(`filter-${classification}`);
+        if (el) el.classList.add('active');
+        renderQueue();
+    }
+
+    function setHistoryTab(tab, btn) {
+        currentHistoryTab = tab;
+        document.querySelectorAll('.history-tab').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        currentEmail = null;
+        document.getElementById('empty-state').style.display = 'flex';
+        document.getElementById('email-detail').style.display = 'none';
+        renderQueue();
+    }
+
+    const sortLabels = {
+        classification: { asc: '⬆ Priority', desc: '⬇ Priority' },
+        date: { desc: '↓ Newest', asc: '↑ Oldest' },
+    };
+
+    function updateSortButtons() {
+        ['classification', 'date'].forEach(mode => {
+            const btn = document.getElementById(`sort-btn-${mode}`);
+            if (!btn) return;
+            btn.textContent = sortLabels[mode][sortDirs[mode]];
+            btn.classList.toggle('active', currentSort === mode);
+        });
+    }
+
+    function setSort(mode) {
+        if (currentSort === mode) {
+            sortDirs[mode] = sortDirs[mode] === 'asc' ? 'desc' : 'asc';
+        } else {
+            currentSort = mode;
+        }
+        updateSortButtons();
+        renderQueue();
+    }
+
+    // ---- Stats ----
+
+    function updateClassificationCounts() {
+        const counts = {};
+        let total = 0;
+        allEmails
+            .filter(e => e.status === 'pending')
+            .filter(e => currentAccountFilter === 'all' || e.account === currentAccountFilter)
+            .forEach(e => {
+                const k = e.classification || 'unknown';
+                counts[k] = (counts[k] || 0) + 1;
+                total++;
+            });
+        ['action_required','calendar','fyi','notification','newsletter','spam','unknown','error'].forEach(k => {
+            const el = document.getElementById(`stat-${k}`);
+            if (el) el.textContent = counts[k] || 0;
+        });
+        document.getElementById('stat-all').textContent = total;
+    }
+
+    async function loadStats() {
+        const res = await fetch('/api/stats');
+        const stats = await res.json();
+        const a = stats.by_account || {};
+        const fin = a['financial'] || 0;
+        const gml = a['gmail'] || 0;
+        const per = a['personal'] || 0;
+        document.getElementById('stat-financial').textContent = fin;
+        document.getElementById('stat-gmail').textContent = gml;
+        document.getElementById('stat-personal').textContent = per;
+        document.getElementById('stat-acct-all').textContent = fin + gml + per;
+        updateClassificationCounts();
+    }
+
+    // ---- Queue ----
+
+    function getVisibleEmails() {
+        let emails = allEmails;
+        if (currentAccountFilter !== 'all') {
+            emails = emails.filter(e => e.account === currentAccountFilter);
+        }
+        if (currentMode === 'inbox') {
+            emails = emails.filter(e => e.status === 'pending');
+            if (currentClassFilter !== 'all') {
+                emails = emails.filter(e => e.classification === currentClassFilter);
+            }
+        } else {
+            if (currentHistoryTab === 'all') {
+                emails = emails.filter(e => e.status !== 'pending');
+            } else {
+                emails = emails.filter(e => e.status === currentHistoryTab);
+            }
+        }
+        return getSortedEmails(emails);
+    }
+
+    function getSortedEmails(emails) {
+        const dir = sortDirs[currentSort] === 'asc' ? 1 : -1;
+        if (currentSort === 'date') {
+            return [...emails].sort((a, b) =>
+                dir * (new Date(a.received_at || a.timestamp) - new Date(b.received_at || b.timestamp))
+            );
+        }
+        return [...emails].sort((a, b) => {
+            const pa = priorityOrder[a.classification] || 9;
+            const pb = priorityOrder[b.classification] || 9;
+            if (pa !== pb) return dir * (pa - pb);
+            return new Date(b.received_at || b.timestamp) - new Date(a.received_at || a.timestamp);
+        });
+    }
+
+    function formatDate(email) {
+        const raw = email.received_at || email.timestamp;
+        if (!raw) return '';
+        return new Date(raw).toLocaleString('en-AU', {
+            day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit'
+        });
+    }
+
+    function renderQueue() {
+        const emails = getVisibleEmails();
+        document.getElementById('queue-count').textContent = `${emails.length} items`;
+        const list = document.getElementById('queue-list');
+        if (emails.length === 0) {
+            const msg = currentMode === 'inbox' ? 'Inbox is clear' : 'No history in this category';
+            list.innerHTML = `<div style="padding:24px;text-align:center;color:var(--text-dimmer)">${msg}</div>`;
+            return;
+        }
+        list.innerHTML = emails.map(e => {
+            const time = formatDate(e);
+            const selected = currentEmail && currentEmail.email_id === e.email_id ? 'selected' : '';
+            const flagged = e.flagged ? 'flagged-item' : '';
+            const stub = e.stub ? 'stub-item' : '';
+            const acct = e.account === 'financial' ? '💼' : e.account === 'personal' ? '🏠' : '📧';
+            const hasDraft = e.draft_reply ? '✏️ ' : '';
+            const statusBadge = currentMode === 'history'
+                ? `<span style="font-size:10px;color:var(--text-dimmer);margin-left:4px;">${e.status}</span>` : '';
+            return `
+            <div class="email-item ${selected} ${flagged} ${stub}" onclick="selectEmail(${JSON.stringify(e).replace(/"/g, '&quot;')})">
+                <div class="email-item-top">
+                    <span class="email-sender">${escHtml(e.sender || 'Unknown')}</span>
+                    <span class="email-time">${time}${e.flagged ? ' 🚩' : ''}</span>
+                </div>
+                <div class="email-subject">${hasDraft}${escHtml(e.subject || '(no subject)')}</div>
+                <div class="email-meta">
+                    <span class="tag tag-${e.stub ? 'stub' : e.classification}">${e.stub ? 'stub' : (e.classification || 'unknown')}</span>
+                    <span class="account-tag">${acct}</span>${statusBadge}
+                </div>
+            </div>`;
+        }).join('');
+    }
+
+    async function loadQueue() {
+        const res = await fetch('/api/queue');
+        allEmails = await res.json();
+        renderQueue();
+        loadStats();
+    }
+
+    function selectNextEmail(afterEmailId) {
+        const visible = getVisibleEmails();
+        const idx = visible.findIndex(e => e.email_id === afterEmailId);
+        const next = visible[idx + 1] || visible[idx - 1] || null;
+        if (next) {
+            selectEmail(next);
+        } else {
+            currentEmail = null;
+            document.getElementById('empty-state').style.display = 'flex';
+            document.getElementById('email-detail').style.display = 'none';
+        }
+    }
+
+    // ---- Email selection ----
+
+    function selectEmail(email) {
+        currentEmail = email;
+        draftVisible = false;
+
+        document.getElementById('empty-state').style.display = 'none';
+        document.getElementById('email-detail').style.display = 'flex';
+        document.getElementById('detail-subject').textContent = email.subject || '(no subject)';
+        document.getElementById('detail-sender').textContent = email.sender || 'Unknown';
+        const acctLabels = { financial: '💼 Financial Planning', gmail: '📧 Positive Tax', personal: '🏠 Personal' };
+        document.getElementById('detail-account').textContent = acctLabels[email.account] || email.account;
+
+        const displayDate = email.received_at || email.timestamp;
+        document.getElementById('detail-time').textContent =
+            displayDate ? new Date(displayDate).toLocaleString('en-AU') : 'Unknown';
+
+        document.getElementById('detail-classification').innerHTML =
+            `<span class="tag tag-${email.stub ? 'stub' : email.classification}">${email.stub ? 'stub' : email.classification}</span>`;
+        const conf = Math.round((email.confidence || 0) * 100);
+        document.getElementById('detail-confidence').textContent = `${conf}%`;
+        document.getElementById('detail-confidence-bar').style.width = `${conf}%`;
+        document.getElementById('email-body-content').textContent =
+            email.body || email.notes || '(no body available)';
+        document.getElementById('email-body-section').scrollTop = 0;
+        document.getElementById('stub-notice').style.display = email.stub ? 'block' : 'none';
+
+        const draftSection = document.getElementById('draft-section');
+        const resizerV = document.getElementById('resizer-v');
+        if (email.classification === 'action_required' && currentMode === 'inbox') {
+            draftSection.style.display = 'flex';
+            resizerV.style.display = 'block';
+            draftVisible = true;
+        } else {
+            draftSection.style.display = 'none';
+            resizerV.style.display = 'none';
+            draftVisible = false;
+        }
+        document.getElementById('draft-to-input').value = extractEmailFromSender(email.sender || '');
+        document.getElementById('draft-guidance-input').value = '';
+
+        const followupBar = document.getElementById('followup-to-bar');
+        if (currentMode === 'history' && email.status === 'sent') {
+            followupBar.style.display = 'flex';
+            document.getElementById('followup-to-input').value = extractEmailFromSender(email.sender || '');
+        } else {
+            followupBar.style.display = 'none';
+        }
+
+        document.getElementById('draft-reply').value = email.draft_reply || '';
+        document.getElementById('btn-generate-draft').textContent =
+            email.draft_reply ? '🔄 Regenerate' : '✏️ Generate';
+
+        renderActionBar(email);
+        renderQueue();
+    }
+
+    function extractEmailFromSender(raw) {
+        const match = raw.match(/<([^>]+)>/);
+        return match ? match[1].trim() : raw.trim();
+    }
+
+    // ---- Action bar ----
+
+    function renderActionBar(email) {
+        const bar = document.getElementById('action-bar');
+        if (currentMode === 'history') {
+            renderHistoryActionBar(email);
+            return;
+        }
+
+        const c = email.classification;
+        const flagBtn = `<button class="action-btn flag" onclick="doFlag()">🚩 Flag</button>`;
+        const fileBtn = `<button class="action-btn file" onclick="openFilePicker()">📁 File…</button>`;
+        const reclassify = `
+            <select class="reclassify-select" onchange="doReclassify(this.value)">
+                <option value="">Reclassify...</option>
+                <option value="action_required">Action Required</option>
+                <option value="calendar">Calendar</option>
+                <option value="fyi">FYI</option>
+                <option value="notification">Notification</option>
+                <option value="newsletter">Newsletter</option>
+                <option value="spam">Spam</option>
+            </select>`;
+
+        let actions = '';
+        if (c === 'action_required') {
+            actions = `
+                <button class="action-btn send" onclick="doSend()">✉️ Send Reply</button>
+                <button class="action-btn archive" onclick="doArchive()">⬇ Archive</button>
+                ${fileBtn}
+                <button class="action-btn delete" onclick="doDelete()">🗑 Delete</button>`;
+        } else if (c === 'fyi') {
+            actions = `
+                <button class="action-btn reply" onclick="toggleDraft()">↩ Reply</button>
+                <button class="action-btn archive" onclick="doArchive()">⬇ Archive</button>
+                ${fileBtn}
+                <button class="action-btn delete" onclick="doDelete()">🗑 Delete</button>`;
+        } else if (c === 'calendar') {
+            actions = `
+                <button class="action-btn send" onclick="doCalendarAccept()">✓ Accept</button>
+                <button class="action-btn delete" onclick="doCalendarDecline()">✕ Decline</button>
+                <button class="action-btn archive" onclick="doArchive()">⬇ Archive</button>
+                ${fileBtn}`;
+        } else if (c === 'notification' || c === 'newsletter') {
+            actions = `
+                <button class="action-btn archive" onclick="doArchive()">⬇ Archive</button>
+                ${fileBtn}
+                <button class="action-btn delete" onclick="doDelete()">🗑 Delete</button>`;
+        } else if (c === 'spam') {
+            actions = `
+                <button class="action-btn archive" onclick="doArchive()">⬇ Archive instead</button>
+                ${fileBtn}
+                <button class="action-btn delete" onclick="doDelete()">🗑 Delete</button>`;
+        } else {
+            actions = `
+                <button class="action-btn archive" onclick="doArchive()">⬇ Archive</button>
+                ${fileBtn}
+                <button class="action-btn delete" onclick="doDelete()">🗑 Delete</button>`;
+        }
+        bar.innerHTML = actions + flagBtn + reclassify;
+    }
+
+    function renderHistoryActionBar(email) {
+        const bar = document.getElementById('action-bar');
+        const s = email.status;
+        if (s === 'sent') {
+            bar.innerHTML = `
+                <button class="action-btn send" onclick="doFollowup()">↩ Send Follow-up</button>
+                <button class="action-btn delete" onclick="clearRecord()">✕ Clear Record</button>`;
+        } else if (s === 'archived') {
+            bar.innerHTML = `
+                <button class="action-btn restore" onclick="doUnarchive()">↩ Move to Inbox</button>
+                <button class="action-btn delete" onclick="doDelete()">🗑 Delete permanently</button>
+                <button class="action-btn" onclick="clearRecord()">✕ Clear Record</button>`;
+        } else if (s === 'filed') {
+            bar.innerHTML = `
+                <button class="action-btn restore" onclick="doUnarchive()">↩ Move to Inbox</button>
+                <button class="action-btn" onclick="clearRecord()">✕ Clear Record</button>`;
+        } else if (s === 'deleted') {
+            bar.innerHTML = `
+                <button class="action-btn restore" onclick="doRestore()">↩ Restore to Queue</button>
+                <button class="action-btn delete" onclick="clearRecord()">✕ Clear Record</button>`;
+        } else {
+            bar.innerHTML = `<button class="action-btn delete" onclick="clearRecord()">✕ Clear Record</button>`;
+        }
+    }
+
+    // ---- FYI reply toggle ----
+
+    function toggleDraft() {
+        draftVisible = !draftVisible;
+        const section = document.getElementById('draft-section');
+        const resizer = document.getElementById('resizer-v');
+        section.style.display = draftVisible ? 'flex' : 'none';
+        resizer.style.display = draftVisible ? 'block' : 'none';
+        if (draftVisible) {
+            document.getElementById('draft-to-input').value = extractEmailFromSender(currentEmail?.sender || '');
+            const bar = document.getElementById('action-bar');
+            bar.innerHTML = `
+                <button class="action-btn send" onclick="doSend()">✉️ Send Reply</button>
+                <button class="action-btn archive" onclick="doArchive()">⬇ Archive</button>
+                <button class="action-btn delete" onclick="doDelete()">🗑 Delete</button>
+                <button class="action-btn" onclick="toggleDraft()">✕ Cancel Reply</button>
+                <button class="action-btn flag" onclick="doFlag()">🚩 Flag</button>`;
+        } else if (currentEmail) {
+            renderActionBar(currentEmail);
+        }
+    }
+
+    // ---- Inbox actions ----
+
+    async function doSend() {
+        if (!currentEmail) return;
+        const draft = document.getElementById('draft-reply').value.trim();
+        if (!draft) { showToast('No draft to send — generate or write a reply first'); return; }
+
+        const doneId = currentEmail.email_id;
+        const to = document.getElementById('draft-to-input').value.trim() || extractEmailFromSender(currentEmail.sender || '');
+        const subject = `Re: ${currentEmail.subject || ''}`;
+
+        showToast('⏳ Sending...');
+        try {
+            const res = await fetch(`/api/email/${doneId}/send`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ to, subject, body: draft })
+            });
+            const data = await res.json();
+            if (data.ok) {
+                showToast('✉️ Reply sent — original archived');
+                const email = allEmails.find(e => e.email_id === doneId);
+                if (email) email.status = 'sent';
+                selectNextEmail(doneId);
+                renderQueue();
+                await loadQueue();
+            } else {
+                showToast(`Send failed: ${data.error || 'unknown error'}`);
+            }
+        } catch (e) {
+            showToast('Send failed — check server logs');
+        }
+    }
+
+    async function doArchive() {
+        if (!currentEmail) return;
+        const doneId = currentEmail.email_id;
+        showToast('⬇ Archiving...');
+        const email = allEmails.find(e => e.email_id === doneId);
+        if (email) email.status = 'archived';
+        selectNextEmail(doneId);
+        renderQueue();
+        const res = await fetch(`/api/email/${doneId}/archive`, { method: 'POST' });
+        const data = await res.json();
+        if (!data.ok) showToast(`Archive failed: ${data.error || 'unknown'}`);
+        await loadQueue();
+    }
+
+    async function doDelete() {
+        if (!currentEmail) return;
+        const doneId = currentEmail.email_id;
+        showToast('🗑 Deleted');
+        const email = allEmails.find(e => e.email_id === doneId);
+        if (email) email.status = 'deleted';
+        selectNextEmail(doneId);
+        renderQueue();
+        await fetch(`/api/email/${doneId}/delete`, { method: 'POST' });
+        await loadQueue();
+    }
+
+    async function doAction(status) {
+        if (!currentEmail) return;
+        const doneId = currentEmail.email_id;
+        showToast(`Marked as ${status}`);
+        const email = allEmails.find(e => e.email_id === doneId);
+        if (email) email.status = status;
+        selectNextEmail(doneId);
+        renderQueue();
+        await fetch(`/api/email/${doneId}/status`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({status})
+        });
+        await loadQueue();
+    }
+
+    async function doFlag() {
+        if (!currentEmail) return;
+        await fetch(`/api/email/${currentEmail.email_id}/flag`, { method: 'POST' });
+        currentEmail.flagged = currentEmail.flagged ? 0 : 1;
+        showToast(currentEmail.flagged ? '🚩 Flagged' : 'Flag removed');
+        await loadQueue();
+        selectEmail(currentEmail);
+    }
+
+    async function doReclassify(classification) {
+        if (!currentEmail || !classification) return;
+        await fetch(`/api/email/${currentEmail.email_id}/reclassify`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({classification})
+        });
+        currentEmail.classification = classification;
+        showToast(`Reclassified as ${classification}`);
+        renderActionBar(currentEmail);
+        await loadQueue();
+        selectEmail(currentEmail);
+    }
+
+    // ---- History actions ----
+
+    async function doUnarchive() {
+        if (!currentEmail) return;
+        const doneId = currentEmail.email_id;
+        showToast('↩ Moving to inbox...');
+        const email = allEmails.find(e => e.email_id === doneId);
+        if (email) email.status = 'pending';
+        selectNextEmail(doneId);
+        renderQueue();
+        const res = await fetch(`/api/email/${doneId}/unarchive`, { method: 'POST' });
+        const data = await res.json();
+        showToast(data.warning ? 'Moved to queue (mailbox warning)' : '↩ Moved back to inbox');
+        await loadQueue();
+    }
+
+    async function doRestore() {
+        if (!currentEmail) return;
+        const doneId = currentEmail.email_id;
+        showToast('↩ Restoring to queue...');
+        const email = allEmails.find(e => e.email_id === doneId);
+        if (email) { email.status = 'pending'; email.stub = 1; }
+        selectNextEmail(doneId);
+        renderQueue();
+        await fetch(`/api/email/${doneId}/restore`, { method: 'POST' });
+        showToast('↩ Restored — visible in inbox as stub');
+        await loadQueue();
+    }
+
+    async function doFollowup() {
+        if (!currentEmail) return;
+        const draft = document.getElementById('draft-reply').value.trim();
+        if (!draft) {
+            const section = document.getElementById('draft-section');
+            const resizerV = document.getElementById('resizer-v');
+            section.style.display = 'flex';
+            resizerV.style.display = 'block';
+            draftVisible = true;
+            showToast('Write your follow-up then click Send Follow-up again');
+            return;
+        }
+        const doneId = currentEmail.email_id;
+        const to = document.getElementById('followup-to-input').value.trim()
+            || extractEmailFromSender(currentEmail.sender || '');
+        const subject = `Re: ${currentEmail.subject || ''}`;
+        showToast('⏳ Sending follow-up...');
+        try {
+            const res = await fetch(`/api/email/${doneId}/send-followup`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ to, subject, body: draft })
+            });
+            const data = await res.json();
+            if (data.ok) {
+                showToast('✉️ Follow-up sent');
+                await loadQueue();
+            } else {
+                showToast(`Send failed: ${data.error || 'unknown error'}`);
+            }
+        } catch (e) {
+            showToast('Send failed — check server logs');
+        }
+    }
+
+    async function clearRecord() {
+        if (!currentEmail) return;
+        const doneId = currentEmail.email_id;
+        showToast('Record cleared');
+        const idx = allEmails.findIndex(e => e.email_id === doneId);
+        if (idx !== -1) allEmails.splice(idx, 1);
+        selectNextEmail(doneId);
+        renderQueue();
+        await fetch(`/api/email/${doneId}/record`, { method: 'DELETE' });
+        await loadQueue();
+    }
+
+    // ---- Draft ----
+
+    async function generateDraft() {
+        if (!currentEmail) return;
+        const btn = document.getElementById('btn-generate-draft');
+        const guidance = document.getElementById('draft-guidance-input').value.trim();
+        btn.textContent = '⏳ Generating...';
+        btn.disabled = true;
+        document.getElementById('draft-reply').classList.add('generating');
+        document.getElementById('draft-reply').value = 'Generating draft...';
+        try {
+            const res = await fetch(`/api/email/${currentEmail.email_id}/generate-draft`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ guidance })
+            });
+            const data = await res.json();
+            if (data.draft) {
+                document.getElementById('draft-reply').value = data.draft;
+                currentEmail.draft_reply = data.draft;
+                btn.textContent = '🔄 Regenerate';
+                showToast(guidance ? '✏️ Draft generated with instructions' : '✏️ Draft generated');
+                renderQueue();
+            } else {
+                document.getElementById('draft-reply').value = '';
+                showToast('Draft generation failed');
+                btn.textContent = currentEmail.draft_reply ? '🔄 Regenerate' : '✏️ Generate';
+            }
+        } catch (e) {
+            document.getElementById('draft-reply').value = '';
+            showToast('Draft generation failed');
+            btn.textContent = currentEmail.draft_reply ? '🔄 Regenerate' : '✏️ Generate';
+        }
+        btn.disabled = false;
+        document.getElementById('draft-reply').classList.remove('generating');
+    }
+
+    async function saveDraft() {
+        if (!currentEmail) return;
+        const draft = document.getElementById('draft-reply').value;
+        await fetch(`/api/email/${currentEmail.email_id}/draft`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({draft})
+        });
+        currentEmail.draft_reply = draft;
+        document.getElementById('btn-generate-draft').textContent =
+            draft ? '🔄 Regenerate' : '✏️ Generate';
+        showToast('Draft saved');
+        renderQueue();
+    }
+
+    function clearDraftPanel() {
+        document.getElementById('draft-reply').value = '';
+        document.getElementById('draft-guidance-input').value = '';
+        document.getElementById('btn-generate-draft').textContent = '✏️ Generate';
+    }
+
+    // ---- Calendar ----
+
+    async function doCalendarAccept() {
+        if (!currentEmail) return;
+        const doneId = currentEmail.email_id;
+        showToast('✓ Accepting...');
+        const res = await fetch(`/api/email/${doneId}/calendar/accept`, { method: 'POST' });
+        const data = await res.json();
+        if (data.warning) {
+            showToast(`⚠️ Accepted (local only) — ${data.warning}`);
+        } else {
+            showToast('✓ Accepted — response sent to organiser');
+        }
+        const email = allEmails.find(e => e.email_id === doneId);
+        if (email) email.status = 'approved';
+        selectNextEmail(doneId);
+        renderQueue();
+        await loadQueue();
+    }
+
+    async function doCalendarDecline() {
+        if (!currentEmail) return;
+        const doneId = currentEmail.email_id;
+        showToast('✕ Declining...');
+        const res = await fetch(`/api/email/${doneId}/calendar/decline`, { method: 'POST' });
+        const data = await res.json();
+        if (data.warning) {
+            showToast(`⚠️ Declined (local only) — ${data.warning}`);
+        } else {
+            showToast('✕ Declined — response sent to organiser');
+        }
+        const email = allEmails.find(e => e.email_id === doneId);
+        if (email) email.status = 'rejected';
+        selectNextEmail(doneId);
+        renderQueue();
+        await loadQueue();
+    }
+
+    // ---- Account settings ----
+
+    async function loadSettings() {
+        try {
+            const res = await fetch('/api/settings');
+            const data = await res.json();
+            document.getElementById('prompt-financial').value = data.prompt_financial || '';
+            document.getElementById('footer-financial').value = data.footer_financial || '';
+            document.getElementById('prompt-gmail').value = data.prompt_gmail || '';
+            document.getElementById('footer-gmail').value = data.footer_gmail || '';
+            document.getElementById('prompt-personal').value = data.prompt_personal || '';
+            document.getElementById('footer-personal').value = data.footer_personal || '';
+        } catch (e) {
+            showToast('Failed to load settings');
+        }
+    }
+
+    async function saveAccountSettings(account) {
+        const prompt = document.getElementById(`prompt-${account}`).value.trim();
+        const footer = document.getElementById(`footer-${account}`).value;
+        try {
+            await fetch('/api/settings', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ key: `prompt_${account}`, value: prompt }),
+            });
+            await fetch('/api/settings', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ key: `footer_${account}`, value: footer }),
+            });
+            showToast('✓ Settings saved');
+        } catch (e) {
+            showToast('Save failed — check server logs');
+        }
+    }
+
+    // ---- Voice profile ----
+
+    async function loadVoiceStatus() {
+        try {
+            const res = await fetch('/api/voice/status');
+            const data = await res.json();
+            renderVoiceStatus('financial', data.financial);
+            renderVoiceStatus('gmail', data.gmail);
+            renderVoiceStatus('personal', data.personal);
+        } catch (e) {}
+    }
+
+    function renderVoiceStatus(account, meta) {
+        const statusEl = document.getElementById(`voice-status-${account}`);
+        const metaEl = document.getElementById(`voice-meta-${account}`);
+        if (meta && meta.generated_at) {
+            statusEl.textContent = '✓ Profile built';
+            statusEl.className = 'voice-status-built';
+            const date = new Date(meta.generated_at).toLocaleString('en-AU', {
+                day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit'
+            });
+            metaEl.textContent = `${meta.example_count} emails · ${date}`;
+        } else {
+            statusEl.textContent = 'Not built';
+            statusEl.className = 'voice-status-empty';
+            metaEl.textContent = '';
+        }
+    }
+
+    let voicePollTimer = null;
+
+    async function buildVoiceProfile() {
+        const btn = document.getElementById('btn-build-voice');
+        btn.disabled = true;
+        btn.textContent = '⏳ Building...';
+        showToast('🎤 Building voice profiles from sent emails...');
+        try {
+            await fetch('/api/voice/build', { method: 'POST' });
+            startVoicePolling();
+        } catch (e) {
+            btn.disabled = false;
+            btn.textContent = '🎤 Build Voice Profile';
+            showToast('Build failed — check server logs');
+        }
+    }
+
+    function startVoicePolling() {
+        if (voicePollTimer) clearInterval(voicePollTimer);
+        let attempts = 0;
+        const maxAttempts = 36; // 6 minutes
+        voicePollTimer = setInterval(async () => {
+            attempts++;
+            const res = await fetch('/api/voice/status');
+            const data = await res.json();
+            renderVoiceStatus('financial', data.financial);
+            renderVoiceStatus('gmail', data.gmail);
+            renderVoiceStatus('personal', data.personal);
+            const bothDone = data.financial?.generated_at && data.gmail?.generated_at && data.personal?.generated_at;
+            if (bothDone || attempts >= maxAttempts) {
+                clearInterval(voicePollTimer);
+                voicePollTimer = null;
+                const btn = document.getElementById('btn-build-voice');
+                btn.disabled = false;
+                btn.textContent = '🎤 Build Voice Profile';
+                showToast(bothDone ? '✓ Voice profiles built' : 'Timed out — check server logs');
+            }
+        }, 10000);
+    }
+
+    // ---- Poll ----
+
+    async function triggerPoll() {
+        showToast('⟳ Polling inboxes...');
+        await fetch('/api/poll', { method: 'POST' });
+        setTimeout(async () => { await loadQueue(); showToast('Poll complete'); }, 8000);
+    }
+
+    // ---- Clear history ----
+
+    function confirmClearHistory() {
+        document.getElementById('clear-overlay').classList.add('show');
+    }
+
+    function cancelClear() {
+        document.getElementById('clear-overlay').classList.remove('show');
+    }
+
+    async function executeClear(scope) {
+        document.getElementById('clear-overlay').classList.remove('show');
+        showToast('Clearing history...');
+        const res = await fetch('/api/history/clear', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({scope})
+        });
+        const data = await res.json();
+        showToast(`Cleared ${data.cleared} records`);
+        currentEmail = null;
+        document.getElementById('empty-state').style.display = 'flex';
+        document.getElementById('email-detail').style.display = 'none';
+        await loadQueue();
+    }
+
+    // ---- File picker ----
+
+    function escAttr(str) {
+        return String(str).replace(/&/g, '&amp;').replace(/'/g, '&#39;').replace(/"/g, '&quot;');
+    }
+
+    async function openFilePicker() {
+        if (!currentEmail) return;
+        currentFileEmailId = currentEmail.email_id;
+        document.getElementById('file-overlay').classList.add('show');
+        document.getElementById('file-search').value = '';
+
+        const listEl = document.getElementById('file-folder-list');
+        listEl.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text-dimmer);">Loading folders…</div>';
+
+        if (!cachedFolders) {
+            try {
+                const res = await fetch('/api/folders');
+                cachedFolders = await res.json();
+            } catch (e) {
+                listEl.innerHTML = '<div style="padding:20px;color:var(--red);">Failed to load folders</div>';
+                return;
+            }
+        }
+
+        fileSuggestions = [];
+        try {
+            const sender = encodeURIComponent(currentEmail.sender || '');
+            const res = await fetch(`/api/folders/suggestions?sender=${sender}`);
+            fileSuggestions = await res.json();
+        } catch (e) {}
+
+        renderFolderPicker(cachedFolders, fileSuggestions, '');
+        document.getElementById('file-search').focus();
+    }
+
+    function renderFolderPicker(folders, suggestions, search) {
+        const listEl = document.getElementById('file-folder-list');
+        const term = search.toLowerCase().trim();
+        let html = '';
+
+        if (suggestions.length > 0 && !term) {
+            html += `<div class="file-section-label">Suggested</div>`;
+            for (const s of suggestions) {
+                const icon = s.target_account === 'financial' ? '💼' : s.target_account === 'personal' ? '🏠' : '📧';
+                html += `<div class="file-folder-item" data-account="${escAttr(s.target_account)}" data-id="${escAttr(s.target_folder_id)}" data-name="${escAttr(s.target_folder_name)}" onclick="doFileFromEl(this)">
+                    <span>${icon} ${escHtml(s.target_folder_name)}</span>
+                    <span class="file-folder-count">${s.count}</span>
+                </div>`;
+            }
+        }
+
+        const sections = [
+            { key: 'financial', label: '💼 Financial Planning', items: (folders && folders.financial) || [] },
+            { key: 'personal',  label: '🏠 Personal',           items: (folders && folders.personal)  || [] },
+            { key: 'gmail',     label: '📧 Positive Tax',       items: (folders && folders.gmail)     || [] },
+        ];
+
+        for (const section of sections) {
+            const filtered = term
+                ? section.items.filter(f => f.name.toLowerCase().includes(term))
+                : section.items;
+            if (filtered.length === 0) continue;
+            html += `<div class="file-section-label">${section.label}</div>`;
+            for (const folder of filtered) {
+                html += `<div class="file-folder-item" data-account="${escAttr(section.key)}" data-id="${escAttr(folder.id)}" data-name="${escAttr(folder.name)}" onclick="doFileFromEl(this)">
+                    ${escHtml(folder.name)}
+                </div>`;
+            }
+        }
+
+        if (!html) {
+            html = '<div style="padding:20px;text-align:center;color:var(--text-dimmer);">No folders found</div>';
+        }
+        listEl.innerHTML = html;
+    }
+
+    function filterFolders(term) {
+        renderFolderPicker(cachedFolders, term ? [] : fileSuggestions, term);
+    }
+
+    function doFileFromEl(el) {
+        doFile(el.dataset.account, el.dataset.id, el.dataset.name);
+    }
+
+    async function doFile(targetAccount, folderId, folderName) {
+        if (!currentFileEmailId) return;
+        document.getElementById('file-overlay').classList.remove('show');
+        showToast('📁 Filing…');
+        const doneId = currentFileEmailId;
+        currentFileEmailId = null;
+        try {
+            const res = await fetch(`/api/email/${doneId}/file`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ target_account: targetAccount, folder_id: folderId, folder_name: folderName }),
+            });
+            const data = await res.json();
+            if (data.ok) {
+                showToast(`📁 Filed to ${folderName}`);
+                const email = allEmails.find(e => e.email_id === doneId);
+                if (email) email.status = 'filed';
+                selectNextEmail(doneId);
+                renderQueue();
+                await loadQueue();
+            } else {
+                showToast(`File failed: ${data.error || 'unknown'}`);
+            }
+        } catch (e) {
+            showToast('File failed — check server logs');
+        }
+    }
+
+    function cancelFile() {
+        document.getElementById('file-overlay').classList.remove('show');
+        currentFileEmailId = null;
+    }
+
+    // ---- Utilities ----
+
+    function showToast(msg) {
+        const t = document.getElementById('toast');
+        t.textContent = msg;
+        t.classList.add('show');
+        setTimeout(() => t.classList.remove('show'), 2500);
+    }
+
+    function escHtml(str) {
+        return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    // ---- Resizers ----
+
+    function makeResizer(resizerId, leftPanelId) {
+        const resizer = document.getElementById(resizerId);
+        const leftPanel = document.getElementById(leftPanelId);
+        let startX, startWidth;
+        resizer.addEventListener('mousedown', e => {
+            startX = e.clientX; startWidth = leftPanel.offsetWidth;
+            resizer.classList.add('dragging');
+            document.addEventListener('mousemove', onMove);
+            document.addEventListener('mouseup', onUp);
+            e.preventDefault();
+        });
+        function onMove(e) { leftPanel.style.width = Math.min(600, Math.max(140, startWidth + (e.clientX - startX))) + 'px'; }
+        function onUp() { resizer.classList.remove('dragging'); document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); }
+    }
+
+    function makeVerticalResizer() {
+        const resizer = document.getElementById('resizer-v');
+        const bodySection = document.getElementById('email-body-section');
+        const draftSection = document.getElementById('draft-section');
+        let startY, startBH, startDH;
+        resizer.addEventListener('mousedown', e => {
+            startY = e.clientY; startBH = bodySection.offsetHeight; startDH = draftSection.offsetHeight;
+            resizer.classList.add('dragging');
+            document.addEventListener('mousemove', onMove);
+            document.addEventListener('mouseup', onUp);
+            e.preventDefault();
+        });
+        function onMove(e) {
+            const d = e.clientY - startY;
+            bodySection.style.flex = 'none';
+            bodySection.style.height = Math.max(60, startBH + d) + 'px';
+            draftSection.style.height = Math.max(100, startDH - d) + 'px';
+        }
+        function onUp() { resizer.classList.remove('dragging'); document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); }
+    }
+
+    makeResizer('resizer-1', 'sidebar');
+    makeResizer('resizer-2', 'queue-panel');
+    makeVerticalResizer();
+
+    loadQueue();
+    setInterval(loadQueue, 60000);
+</script>
+</body>
+</html>

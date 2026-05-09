@@ -1,0 +1,537 @@
+# Email AI Agent — Master Project Reference
+
+> This document is the single source of truth for all Claude sessions on this project.
+> Read this at the start of every session. Update the "Current State" section at the end of every session.
+> Never assume anything not written here. Ask if uncertain.
+
+---
+
+## 1. Who this is for
+
+A sole operator running three businesses/personas:
+- Financial planning business (primary client-facing)
+- Tax business (separate client base)
+- Personal life
+
+Goal: AI agent running on a local Mac mini that autonomously manages email triage, spam deletion, filing, draft generation, and calendar — with human approval for anything outgoing. Accessible via browser at home and via Telegram when travelling.
+
+---
+
+## 2. Hardware and environment
+
+| Item | Detail |
+|---|---|
+| Machine | MacBook Pro 16 M4 Max (development). Mac mini Apple Silicon on order — will migrate when it arrives |
+| macOS | 26.4.1 |
+| RAM allocated to this project | 32 GB maximum |
+| Package managers installed | Homebrew 5.1.9, npm 11.12.1, pip 26.1 |
+| Python | 3.14.4 installed via Homebrew — use `python3` and `pip3` |
+| Node | 25.9.0 installed via Homebrew |
+| Ollama | 0.23.0 — runs as Mac App Store menu bar app, NOT a brew service |
+| Shell | zsh |
+| Browser | Microsoft Edge (primary). Safari used as fallback for Microsoft portal sessions only |
+| Network | Tailscale installed on all devices. No public internet exposure. All services bind to Tailscale IP only, never 0.0.0.0 |
+| Tailscale | Two installs: Mac App Store (menu bar) and Homebrew CLI (`/usr/local/bin/tailscale`). System extension (`io.tailscale.ipn.macsys.network-extension`) is the actual daemon — both GUI and CLI talk to it. CLI has full control: `tailscale up`, `tailscale down`, `tailscale status`, `tailscale ip -4`. Menu bar app is optional UI only. Never use `ifconfig` for IP — use `tailscale ip -4`. |
+| Remote access | Tailscale mesh — MacBook Pro, iPhone, and other devices all on same Tailscale network |
+
+---
+
+## 3. Email and calendar accounts
+
+| Account | Email | Platform | API | Status |
+|---|---|---|---|---|
+| Financial planning | `anthony@intertek.com.au` | Microsoft 365 (corporate) | Microsoft Graph API | ✅ Connected |
+| Tax business | `anthony.wolfenden@positivetaxsolutions.com.au` | Gmail | Gmail API | ✅ Connected |
+| Personal | `anthony@wolfenden.net` | Exchange Online (Plan 1) | Microsoft Graph API | ✅ Connected — application permissions |
+
+---
+
+## 4. M365 account and Azure app details
+
+### Personal account — ✅ Connected via application permissions
+
+`anthony@wolfenden.net` is a real member user in the Intertek Entra ID tenant (Object ID: `22f0a88c-6b86-4490-bf33-974f0b37edf4`). Exchange Online Plan 1. Highest volume inbox of the three accounts.
+
+**Auth method:** Client credentials flow (`grant_type=client_credentials`) using `AZURE_CLIENT_ID_PERSONAL` + `AZURE_CLIENT_SECRET_PERSONAL`. No user sign-in or OAuth flow. Token cached as `personal_app` in `tokens_graph.json`. All Graph calls use `/users/anthony@wolfenden.net/...`. Permissions: `Mail.ReadWrite`, `Mail.Send`, `Calendars.ReadWrite` — all Application type with admin consent.
+
+**If 403 after permission changes:** Delete `personal_app` key from `tokens_graph.json` to force fresh token acquisition.
+
+### Tenant
+
+| Item | Value |
+|---|---|
+| Tenant ID | `d5bc2b9f-627d-4dd8-a34c-119a2c137b14` |
+| Tenant name | Intertek Pty Ltd |
+
+### Users in tenant
+
+| Account | Email | Object ID |
+|---|---|---|
+| Financial planning | `anthony@intertek.com.au` | `0b74a57b-a749-4e9e-bae1-0148aabb196b` |
+| Personal | `anthony@wolfenden.net` | `22f0a88c-6b86-4490-bf33-974f0b37edf4` |
+
+### App registrations
+
+| App | Purpose | Client ID key in .env | Secret key in .env |
+|---|---|---|---|
+| `email-agent` | M365 financial planning | `AZURE_CLIENT_ID_FINANCIAL` | `AZURE_CLIENT_SECRET_FINANCIAL` |
+| `email-agent-personal` | M365 personal (parked) | `AZURE_CLIENT_ID_PERSONAL` | `AZURE_CLIENT_SECRET_PERSONAL` |
+
+### API permissions — email-agent app (confirmed granted)
+
+| Permission | Type | Purpose |
+|---|---|---|
+| `Mail.ReadWrite` | Delegated | Read, file, delete emails |
+| `Mail.Send` | Delegated | Send approved drafts |
+| `Calendars.ReadWrite` | Delegated | Read and create calendar events |
+| `User.Read` | Delegated | Identify authenticated account |
+| `offline_access` | Delegated | Maintain connection via refresh token |
+
+### Redirect URIs — email-agent app (confirmed registered)
+- `http://localhost:8000/auth/callback/financial`
+- `http://localhost:8000/auth/callback/personal`
+
+### Google Cloud — Gmail app registration
+
+| Item | Key name in .env |
+|---|---|
+| Client ID | `GOOGLE_CLIENT_ID` |
+| Client secret | `GOOGLE_CLIENT_SECRET` |
+
+**Gmail OAuth app name:** `email-agent`
+**Redirect URI:** `http://localhost:8000/auth/callback/gmail`
+**Scopes:** `gmail.modify`, `calendar`, `userinfo.email`, `userinfo.profile`, `openid`
+
+### Security notes
+- Azure client secret (`AZURE_CLIENT_SECRET_FINANCIAL`) was visible in chat — rotate after personal account issue resolved
+- Gmail client secret (`GOOGLE_CLIENT_SECRET`) was visible in chat — rotate after personal account issue resolved
+- Steps to rotate Azure secret: App registrations → email-agent app → Certificates & secrets → delete old → New client secret → copy value → update `.env`
+- Steps to rotate Gmail secret: Google Cloud Console → Credentials → edit email-agent client → Reset secret → update `.env`
+
+---
+
+## 5. Chosen tech stack
+
+### Backend
+- **FastAPI** 0.136.1 (Python, async) — agent core and API server
+- **uvicorn** 0.46.0 — ASGI server to run FastAPI
+- **httpx** 0.28.1 — async HTTP client for API calls
+- **APScheduler** 3.11.2 — polling scheduler (every 5 minutes per inbox)
+- **SQLite** — action log, draft history, learning loop data, per-account settings (prompts, footers)
+- **aiosqlite** 0.22.1 — async SQLite driver
+- **Jinja2** 3.1.6 — HTML templating
+- **python-dotenv** 1.2.2 — loads .env secrets
+- **ChromaDB** — semantic vector store (Phase 6, deferred)
+
+### Python 3.14 compatibility note
+Always use:
+```python
+templates.TemplateResponse(request, "template.html")
+```
+Never:
+```python
+templates.TemplateResponse("template.html", {"request": request})
+```
+
+### AI tiers
+
+| Tier | Tool | Used for |
+|---|---|---|
+| Local | Ollama 0.23.0 + phi4-mini:latest | Classification only |
+| Cloud | Claude API — claude-sonnet-4-6 | On-demand draft generation (primary) |
+| Cloud | OpenAI API — gpt-4o | Draft generation fallback if Claude fails |
+| Cloud | Gemini API | Not yet configured — skipped for now |
+
+**Note on local model:** Must use `phi4-mini:latest` — not `phi4-mini`. Ollama runs as Mac App Store menu bar app — not a brew service, do not use `brew services` to manage it.
+**Note on Claude API:** Model string is `claude-sonnet-4-6`. Separate Anthropic API account from Claude Pro. ANTHROPIC_API_KEY set in `.env`.
+**Note on OpenAI API:** Model string is `gpt-4o`. Used as fallback only — same prompt as Claude. OPENAI_API_KEY set in `.env`.
+
+### Anthony's voice — draft prompt calibration
+Per-account base prompts and footers are stored in the SQLite `settings` table and editable via ⚙ Settings → Account Configuration in the dashboard. Hardcoded defaults in `agent/drafter.py` are used only on first run before the user saves via the UI.
+
+- Wise, calm, direct. Genuinely on the client's side.
+- Short, precise sentences. One idea per sentence. No run-ons.
+- Prose by default. Structure only when items are genuinely parallel or sequential.
+- Leads with human moment when one exists.
+- Cites ATO references and legislation when useful — not to impress.
+- Frames as general considerations, not specific recommendations (compliance).
+- Sign-off always "Kind Regards".
+- Signature block appended by `generate_draft()` after the LLM response — never generated by the model. Footer loaded from `settings` table (`footer_financial` / `footer_gmail`).
+- Financial account (Intertek): investment, super, insurance, cashflow, retirement focus. Authorised Representative under AFSL.
+- Gmail account (Positive Tax): tax, BAS, tax planning, SMSF, business structuring focus. Registered Tax Agent.
+
+### Frontend
+- Served on Tailscale IP only, no public port
+- Two-mode interface: Inbox (pending only) and History (sent/archived/deleted)
+- Three-panel layout: sidebar / queue / detail — all panels resizable
+- Vertical resizer between email body and draft panel
+
+---
+
+## 6. Agent behaviour — autonomous action rules
+
+Current comfort level: **Moderate**
+
+| Action | Autonomous? | Threshold | Notes |
+|---|---|---|---|
+| Hard delete spam | Yes — auto | Confidence > 0.95 | Permanently deleted — unrecoverable |
+| Move to Junk | Yes — auto | Confidence ≤ 0.95 | Lower confidence spam |
+| Move newsletters | Yes — auto | Any confidence | Moved to Newsletters folder |
+| Move notifications | Yes — auto | Any confidence | Moved to Notifications folder |
+| Generate draft reply | On-demand only | Any classification | User clicks Generate Draft button |
+| Send any email | Never autonomous | — | Always requires explicit human action |
+
+**Delete behaviour:**
+- UI delete (🗑 button) → soft delete → moves to Deleted Items (M365) or Trash (Gmail). Recoverable for 30 days.
+- Autonomous spam delete (confidence > 0.95) → hard delete → permanently removed from server.
+
+**Poll behaviour:** Fetches ALL messages currently in inbox on every poll cycle (fully paginated, no count limit). Reconciles SQLite pending records against live inbox — anything pending in SQLite but no longer in inbox is automatically marked archived. Duplicate email_ids prevented by unique index.
+
+**Inbox model:** If it's in the inbox it's pending. If it's not in the inbox it's not pending. Always reflects live mailbox state after each poll.
+
+**Folders auto-created:** Newsletters, Notifications, Junk Email, Archive — on first use in both M365 and Gmail.
+
+**Inbox view actions per classification:**
+
+| Classification | Actions available |
+|---|---|
+| `action_required` | Send Reply, Archive, 📁 File…, Delete |
+| `fyi` | Reply (draft panel), Archive, 📁 File…, Delete |
+| `calendar` | Accept, Decline, Archive, 📁 File… |
+| `notification` | Archive, 📁 File…, Delete |
+| `newsletter` | Archive, 📁 File…, Delete |
+| `spam` | Archive instead, 📁 File…, Delete |
+
+File button always sits between Archive and Delete (or after Archive when there is no Delete). All classifications also have Flag and Reclassify controls.
+
+**History view actions per status:**
+
+| Status | Actions available |
+|---|---|
+| `sent` | Send Follow-up (editable To field, draft panel), Clear Record |
+| `archived` | Move to Inbox (live unarchive + mark pending), Delete permanently, Clear Record |
+| `deleted` | Restore to Queue (stub), Clear Record |
+
+**Clear Record** — deletes single SQLite row by email_id via `DELETE /api/email/{id}/record`. Does not affect mailbox. Does not bulk-clear.
+
+**Clear History button** (History mode sidebar) — bulk clear by scope: Sent / Archived / Deleted / All. Does not affect mailbox. Requires confirmation.
+
+---
+
+## 7. Phased implementation plan
+
+| Phase | Description | Status |
+|---|---|---|
+| 1 | Foundation — Python venv, core libraries, FastAPI test page | ✅ Complete |
+| 2 | Email connectivity — OAuth for all 3 accounts, read-only test | ✅ Complete (all 3 connected) |
+| 3 | Agent core — polling loop, classification, SQLite logging | ✅ Complete |
+| 4 | Web UI — FastAPI dashboard, action queue | ✅ Complete |
+| 5A | Autonomous actions — delete spam, move newsletters/notifications | ✅ Complete |
+| 5B | Draft generation — Claude API on-demand drafts | ✅ Complete |
+| 5C | Live send, archive, mark-read, full workflow | ✅ Complete |
+| 5D | History view, unarchive, restore, clear history, soft delete | ✅ Complete |
+| 5E | Full inbox sync — paginated fetch, reconciliation, account filter | ✅ Complete |
+| 5F | Clear Record fix, no confirmation dialogs, sender address parsing | ✅ Complete |
+| 6 | Learning loop — synthesise voice profile from sent emails, inject into drafts | ✅ Complete |
+| 7 | Telegram integration — mobile channel for travel | Not started |
+
+---
+
+## 8. Project folder structure (current)
+
+```
+~/email-agent/
+├── email-agent              # Master control script (also at /opt/homebrew/bin/email-agent)
+├── main.py                  # FastAPI app — all routes
+├── agent/
+│   ├── __init__.py
+│   ├── actions.py           # Autonomous actions — hard_delete_email for spam, move for newsletters/notifications
+│   ├── classifier.py        # Ollama/phi4-mini:latest classification
+│   ├── drafter.py           # Claude API on-demand draft generation
+│   └── poller.py            # Full paginated inbox fetch, reconciliation, no count limit
+├── connectors/
+│   ├── graph.py             # M365 — paginated full inbox, soft delete, hard_delete_email, archive, unarchive, send, mark read
+│   └── gmail.py             # Gmail — paginated full inbox, soft delete, hard_delete_email, archive, unarchive, send, mark read
+├── db/
+│   ├── __init__.py
+│   └── database.py          # SQLite — action_log, sent_examples, voice_profiles, settings, filing_history tables
+├── ui/
+│   ├── templates/
+│   │   └── dashboard.html   # Two-mode UI, account filter, history view, no confirmation dialogs
+│   └── static/
+├── logs/                    # PID files and logs — 14 day retention, auto-purged on start
+├── config/
+│   ├── .env                 # All secrets and config
+│   ├── agent.db             # SQLite database (auto-generated)
+│   ├── tokens_graph.json    # M365 OAuth tokens (auto-generated)
+│   └── tokens_gmail.json    # Gmail OAuth tokens (auto-generated)
+└── requirements.txt
+```
+
+---
+
+## 9. API credentials and secrets (locations, not values)
+
+All secrets live in `~/email-agent/config/.env` — never hardcoded, never in git.
+
+| Secret | Key name in .env | Status |
+|---|---|---|
+| Azure app client ID (M365 financial) | `AZURE_CLIENT_ID_FINANCIAL` | Set |
+| Azure app client secret (M365 financial) | `AZURE_CLIENT_SECRET_FINANCIAL` | Set — rotate when personal resolved |
+| Azure tenant ID | `AZURE_TENANT_ID` | Set |
+| Azure object ID — financial planning user | `AZURE_OBJECT_ID_FINANCIAL` | Set |
+| Azure app client ID (M365 personal) | `AZURE_CLIENT_ID_PERSONAL` | Set |
+| Azure app client secret (M365 personal) | `AZURE_CLIENT_SECRET_PERSONAL` | Set |
+| Azure object ID — personal user | `AZURE_OBJECT_ID_PERSONAL` | Set |
+| Google OAuth client ID (Gmail tax) | `GOOGLE_CLIENT_ID` | Set |
+| Google OAuth client secret (Gmail tax) | `GOOGLE_CLIENT_SECRET` | Set — rotate when personal resolved |
+| Anthropic API key (Claude) | `ANTHROPIC_API_KEY` | ✅ Set |
+| OpenAI API key | `OPENAI_API_KEY` | ✅ Set |
+| Google Gemini API key | `GEMINI_API_KEY` | Not yet set |
+| Default cloud provider for drafting | `DRAFT_DEFAULT_PROVIDER` | claude |
+| Default cloud provider for analysis | `COMPLEX_ANALYSIS_DEFAULT_PROVIDER` | claude |
+| Fallback cloud provider | `FALLBACK_PROVIDER` | gemini |
+| Tailscale IP of active machine | `TAILSCALE_IP` | `100.100.150.128` |
+
+**Migration note:** When Mac mini arrives, update `TAILSCALE_IP`. Confirm Ollama menu bar app starts at login on Mac mini.
+
+---
+
+## 10. How to work with Claude on this project
+
+### Session discipline
+- Paste this document (or confirm Claude has read it from the Project) at the start of every session
+- State the single goal for that session in one sentence before asking anything else
+- End every session by asking Claude to produce the complete updated project reference document as a download
+
+### File management rules
+- Claude always provides complete files — never partial edits
+- Project reference document always provided as a download
+- Terminal commands shown as copyable code blocks
+- To replace a file using vi: open with `vi`, type `ggdG` to clear, press `i`, paste, press `Esc` then `:wq`
+
+### Prompting rules that prevent hallucinations
+- Always paste the actual error message — never describe it in your own words
+- Always paste the relevant code block — never summarise what it does
+- Ask Claude to produce one file at a time, test it, then move to the next
+
+### How to start each session
+```
+I am working on my email AI agent project.
+Today's goal: [one sentence]
+```
+
+### Red flags — stop and clarify if Claude does any of these
+- Suggests a library or tool not in the stack above without explaining why
+- Produces code that references a file or function not yet created
+- Gives instructions that differ from what worked in a previous session
+- Asks you to modify Azure or Google app settings without explaining the exact change needed
+
+---
+
+## 11. Current state (update this after every session)
+
+**Last updated:** 2026-05-09. Filing feature implemented (section 12.6). Sort buttons toggle direction. File button positioned between Archive and Delete. Action bar button colors follow semantic palette.
+
+**All phases 1–6: Complete. All three accounts: Complete.**
+
+**What is working:**
+- `email-agent start/stop/restart/debug/status` — Tailscale CLI, Ollama, FastAPI all managed
+- Tailscale fully controlled via CLI — menu bar app not required
+- FastAPI on `100.100.150.128:8000`
+- All three accounts connected and polling — M365 financial (delegated OAuth), Gmail tax (delegated OAuth), M365 personal (application permissions / client credentials)
+- Full paginated inbox fetch — every email in inbox fetched every poll cycle
+- Reconciliation — pending emails no longer in inbox auto-archived each cycle
+- Unique index on email_id — duplicates impossible
+- phi4-mini:latest classifying accurately
+- Autonomous actions: spam hard-deleted (>0.95), newsletters/notifications moved
+- On-demand draft generation with voice profile injection
+- Draft tone calibrated per account — base prompt read from `settings` table (`prompt_financial` / `prompt_gmail` / `prompt_personal`), falls back to hardcoded defaults in `agent/drafter.py` (`DEFAULT_PROMPT_FINANCIAL`, `DEFAULT_PROMPT_GMAIL`, `DEFAULT_PROMPT_PERSONAL`) if not yet saved. Personal prompt: warm, direct, no compliance framing, casual sign-off acceptable.
+- Draft generation provider chain: Claude (`claude-sonnet-4-6`) primary → OpenAI (`gpt-4o`) fallback on any exception → empty string if both fail. Same prompt sent to whichever provider runs. Provider used logged at INFO level.
+- Email footers appended to every draft — read from `settings` table (`footer_financial` / `footer_gmail`). No .env fallback.
+- Learning loop — sent emails (3 months, 300+ char body) synthesised into a voice profile per account via Claude. Runs for financial, personal, and gmail. Stored in `voice_profiles` table. Manual trigger: `POST /api/voice/build`. Re-run to refresh.
+- Editable To field in draft panel — pre-populated from sender, editable before sending
+- Multiple recipients — separate with `,` or `;` in the To field. Both connectors handle arrays.
+- Instruction field for draft guidance — type e.g. "make it shorter, focus on the CGT implications" before clicking Generate/Regenerate. Passed as additional constraint to Claude on top of base prompt and voice profile.
+- Three-mode dashboard — Inbox, History, Settings (⚙)
+- Settings — Voice Profile section: build status for all three accounts, Build and Refresh buttons, polls every 10s after build until all three complete
+- Settings — Account Configuration section: per-account base prompt textarea + footer textarea + Save button for Financial Planning (Intertek), Positive Tax Solutions, and Personal. Loaded from DB on entering Settings mode.
+- `GET /api/settings` — returns all 6 settings (DB values or hardcoded defaults): `prompt_financial`, `prompt_gmail`, `prompt_personal`, `footer_financial`, `footer_gmail`, `footer_personal`
+- `POST /api/settings` — saves any of the 6 keys (allowlist enforced)
+- Queue architecture: `get_queue()` in `db/database.py` fetches ALL pending emails (no limit — inbox must always be complete), and up to 500 history records. Combined and sorted by classification priority. `api_queue()` in `main.py` calls `get_queue()` with no arguments. The old `limit=300` argument was removed.
+- Sort buttons toggle direction on repeated click. Priority defaults ascending (Action Required at top). Date defaults descending (newest first). Arrow in button label shows current direction. Both have tiebreakers.
+- Manual folder filing: "📁 File…" button on every inbox email opens a searchable folder picker grouped by account (Financial Planning, Personal, Positive Tax). Folders fetched from all three accounts simultaneously via `GET /api/folders`. Filing calls `POST /api/email/{id}/file`, moves email on the server, records the action in `filing_history` SQLite table, marks status as `filed`. Filed emails appear under History → 📁 Filed tab.
+- Smart filing suggestions: after the first filing, future opens of the picker show a "Suggested" section at top for emails from the same sender domain, ranked by filing count. Powered by `GET /api/folders/suggestions?sender={raw_sender}`.
+- Cross-account filing not yet supported — same-account only. Returns a clear error if attempted.
+- Account filter — All / Financial Planning / Positive Tax / Personal
+- Classification filter within account in inbox mode
+- History sub-tabs — Sent, Archived, Deleted, All
+- Sent — Send Follow-up with editable To field
+- Archived — Move to Inbox (live unarchive), Delete permanently, Clear Record
+- Deleted — Restore to Queue (stub), Clear Record
+- Clear Record — deletes single row by email_id (not bulk)
+- Clear History — bulk by scope with confirmation
+- Stub items — purple tag and notice banner
+- Soft delete — Deleted Items (M365) / Trash (Gmail), recoverable 30 days
+- Hard delete — autonomous spam only
+- No confirmation dialogs on send or delete
+- Resizable panels, auto-advance, all actions logged to SQLite
+
+**Next session — start here:**
+1. `email-agent start`
+2. Confirm dashboard at `http://100.100.150.128:8000`
+3. Hit Poll Now — verify inbox counts match Outlook and Gmail
+4. Choose next item from Section 12
+
+**Known issues:**
+- Rotate Azure and Gmail client secrets — both were visible in chat
+- `GEMINI_API_KEY` not yet set (deferred)
+
+**All files:**
+- `~/email-agent/email-agent` (also `/opt/homebrew/bin/email-agent`)
+- `~/email-agent/main.py`
+- `~/email-agent/agent/__init__.py`
+- `~/email-agent/agent/actions.py`
+- `~/email-agent/agent/classifier.py`
+- `~/email-agent/agent/drafter.py`
+- `~/email-agent/agent/learner.py`
+- `~/email-agent/agent/poller.py`
+- `~/email-agent/db/__init__.py`
+- `~/email-agent/db/database.py`
+- `~/email-agent/connectors/graph.py`
+- `~/email-agent/connectors/gmail.py`
+- `~/email-agent/ui/templates/dashboard.html`
+- `~/email-agent/config/.env`
+- `~/email-agent/config/agent.db` (auto-generated)
+- `~/email-agent/config/tokens_graph.json` (auto-generated)
+- `~/email-agent/config/tokens_gmail.json` (auto-generated)
+
+**Technical notes:**
+- `deleteditems` is the M365 well-known folder name for soft delete (no space, lowercase)
+- Gmail soft delete: add TRASH label, remove INBOX label
+- M365 pagination: follow `@odata.nextLink`. Gmail pagination: follow `nextPageToken`
+- Unique index on email_id — `INSERT OR IGNORE` used in log_action
+- `extract_email_addresses()` in main.py parses one or more addresses, splits on `,` or `;`, handles "Display Name <email>" form, returns a list
+- Graph `send_email()` accepts `to` as `str | list` — builds `toRecipients` array
+- Gmail `send_email()` accepts comma-separated string in MIME To header natively
+- `extractEmailFromSender()` in dashboard.html parses sender string client-side
+- Voice profile: `sent_examples` table caches raw emails, `voice_profiles` table stores synthesised profile (one row per account, upserted). Profile injected into draft prompt via `VOICE_PROFILE_BLOCK` in `agent/drafter.py`.
+- Draft guidance: optional `guidance` field in `GenerateDraftRequest` appended to prompt as "Additional instruction: …"
+- Settings table: key/value store in SQLite. Keys: `prompt_financial`, `prompt_gmail`, `prompt_personal`, `footer_financial`, `footer_gmail`, `footer_personal`. Read by `get_setting()`, written by `set_setting()`. `GET /api/settings` returns all 6 (DB or defaults). `POST /api/settings` saves one key at a time (allowlist enforced).
+- `.env` rule: credentials, API keys, IDs, secrets, and config values only. Footers and prompts are in SQLite. Never store operational content in `.env`.
+- Personal account auth: client credentials flow (`grant_type=client_credentials`) using `AZURE_CLIENT_ID_PERSONAL` + `AZURE_CLIENT_SECRET_PERSONAL`. No user sign-in. Token cached as `personal_app` in `tokens_graph.json`. All Graph calls use `/users/anthony@wolfenden.net/...`. If 403 after permission changes, delete `personal_app` key from `tokens_graph.json` to force fresh token acquisition.
+- Personal account inbox filter shows with yellow dot in sidebar. Account label is `personal` in SQLite.
+- `get_queue(history_limit=500)` signature: pending fetched with no LIMIT clause; history fetched with `LIMIT history_limit`. Do not pass a `limit` keyword — the old param is gone.
+- `filing_history` table: `(sender_domain, target_folder_id)` unique index. `record_filing()` upserts and increments count. `get_filing_suggestions(sender_domain, limit=5)` returns top targets ordered by count DESC.
+- `graph.list_folders(account)` — fetches `mailFolders?$expand=childFolders`, returns flat list including one level of subfolders as "Parent / Child". Sorted alphabetically.
+- `gmail.list_labels()` — returns user-created labels only; excludes all `_GMAIL_SYSTEM_LABELS` and any `CATEGORY_` prefixed IDs.
+- `graph.file_to_folder(account, email_id, folder_id)` and `gmail.file_to_label(email_id, label_id)` — move by ID directly, no name lookup. Distinct from `move_email()` which takes a folder name and creates if missing.
+- Filing domain extraction: uses `extract_email_addresses()` to parse sender, then splits on `@` to get domain for `filing_history` key.
+- Sort state: `sortDirs = { classification: 'asc', date: 'desc' }`. `setSort(mode)` toggles direction if mode is already active, else switches mode keeping its stored direction. `updateSortButtons()` syncs button text and active class.
+
+---
+
+## 12. Known issues and next session work items
+
+### 12.1 — Personal M365 account ✅ Connected
+
+`anthony@wolfenden.net` — confirmed real member user in the Intertek Entra ID tenant (Object ID: `22f0a88c-6b86-4490-bf33-974f0b37edf4`). Has Exchange Online Plan 1. Highest volume inbox of the three accounts.
+
+**Attempts made (previous session — did not succeed):**
+1. **Separate certificate for personal app registration** — attempted in Azure portal, was challenged during creation and did not complete.
+2. **Financial app registration acting as global admin** — the financial account is a global admin and theoretically has delegate access to all mailboxes in the tenant. Attempted to use this to read the personal mailbox. Got `AADSTS50058` and other errors. Could not pull emails.
+3. Account parked after both approaches failed.
+
+**Error AADSTS50058:** "A silent sign-in request was sent but no user is signed in." Indicates the app attempted silent/cached token acquisition for the personal user but no session existed — interactive auth was needed but not triggered correctly, or MFA/Conditional Access blocked it.
+
+**Resolution:** Application permissions (client credentials flow) on the `email-agent-personal` app registration. `Mail.ReadWrite`, `Mail.Send`, `Calendars.ReadWrite` added as Application type permissions with admin consent granted in Azure portal. Code uses `grant_type=client_credentials` — no user sign-in or OAuth flow required. All Graph calls use `/users/anthony@wolfenden.net/...` instead of `/me/...`. Token cached in `tokens_graph.json` under `personal_app` key, auto-refreshed when expired. Confirmed working 2026-05-08.
+
+**Note:** `get_user_profile("personal")` returns `displayName: null` because `User.Read.All` application permission is not granted — this only affects the `/auth/test/personal` display page, not any dashboard functionality.
+
+### 12.2 — Calendar live actions ✅ Complete
+M365: `POST /me/messages/{id}/accept` and `/decline` via Graph API — response sent to organiser automatically, `sendResponse: true`.
+Gmail: extracts ICS from email payload (`text/calendar` MIME part), parses UID, finds event in Google Calendar via `iCalUID` query, patches attendee `responseStatus` with `sendUpdates: all`.
+Both endpoints fall back gracefully — if the live call fails, SQLite status still updates and a warning is returned to the UI. Toast shows "Accepted (local only) — {reason}" on fallback.
+
+### 12.3 — OpenAI fallback ✅ Complete. Gemini deferred.
+OpenAI (`gpt-4o`) wired as fallback in `agent/drafter.py` — tried automatically if Claude throws any exception. Gemini skipped for now.
+
+### 12.4 — Phase 6 — Learning loop ✅ Complete
+Sent emails (3 months, min 300 chars) fetched from both accounts and stored in `sent_examples` table. Claude synthesises a compact voice profile per account from up to 50 most recent examples (400 chars each). Profile stored in `voice_profiles` table (one row per account, upserted on each run). Injected into draft prompt via `VOICE_PROFILE_BLOCK` in `agent/drafter.py`. No scheduler — trigger manually via `POST /api/voice/build` whenever a refresh is wanted. Signature stripped before storage via `strip_signature()` in `agent/learner.py`.
+
+### 12.5 — Email footer / signature blocks ✅ Complete
+
+Footers stored in SQLite `settings` table as `footer_financial` and `footer_gmail`. Appended by `generate_draft()` after the LLM response. Editable via ⚙ Settings → Account Configuration in the dashboard — changes take effect on the next draft with no restart. No `.env` involvement.
+
+### 12.6 — Manual folder filing with smart suggestions ✅ Complete (same-account)
+
+**Goal:** Add a "File" action as the last option on every email (after all other actions). Opens a folder picker that lets the user move the email into any folder — including folders in the other accounts.
+
+**UI behaviour:**
+
+- "File…" button appears last in the action row for every classification
+- Clicking it opens a folder picker panel or modal (not a browser select — a searchable list)
+- Folders are grouped by account: Financial Planning (Intertek) / Positive Tax Solutions (Gmail) / Personal
+- Smart suggestions appear at the top: folders where similar emails have been filed before (based on sender domain + subject keywords, stored in SQLite)
+- User selects a target folder → email is moved and marked `filed` in the action log
+
+**Same-account filing:**
+
+- M365: `POST /messages/{id}/move` with destination folder ID (already implemented as `move_email()` in `graph.py`)
+- Gmail: `POST /messages/{id}/modify` — add target label, remove INBOX label (already implemented as `move_email()` in `gmail.py`)
+- Need a folder/label listing endpoint per account: `GET /me/mailFolders` (Graph, recursive) and `GET /labels` (Gmail)
+
+**Cross-account filing:**
+
+- Not a native move — different providers. Approach: fetch full email content from source, create it in target account's folder, archive/delete from source
+- M365 → M365 (financial ↔ personal): use Graph `MIME` export (`GET /messages/{id}/$value`) and `POST /messages` with raw MIME to target mailbox folder
+- M365 → Gmail or Gmail → M365: same MIME approach — export and re-import. Treat as a copy+archive, not a true move. Fidelity may not be perfect (headers, threading).
+- Cross-account filing is lower priority than same-account — implement same-account first
+
+**Smart filing memory (SQLite):**
+
+- New table: `filing_history` — columns: `sender_domain TEXT`, `subject_keywords TEXT`, `target_account TEXT`, `target_folder_id TEXT`, `target_folder_name TEXT`, `filed_at TEXT`, `count INTEGER`
+- On each manual file action: upsert a row keyed on `(sender_domain, target_folder_id)`, incrementing `count`
+- On folder picker open: query top 5 `target_folder_name` entries ordered by `count DESC` where `sender_domain` matches current email sender — surface these as "Suggested" at top of picker
+- Subject keywords as secondary signal (optional refinement after basic version works)
+
+**New API endpoints needed:**
+
+- `GET /api/folders` — returns folder tree for all three accounts, grouped by account. Calls `list_folders()` on each connector.
+- `POST /api/email/{id}/file` — body: `{target_account, folder_id, folder_name}`. Performs the move and logs to `filing_history`.
+
+**New connector functions needed:**
+
+- `graph.py`: `list_folders(account)` — recursive `GET /mailFolders?$expand=childFolders`
+- `gmail.py`: `list_labels()` — `GET /labels` filtered to user-created labels only (exclude system labels like INBOX, SENT, TRASH)
+
+**Implementation status:**
+
+1. ✅ `filing_history` table in `db/database.py` — `record_filing()` + `get_filing_suggestions()`
+2. ✅ `list_folders(account)` in `graph.py`, `list_labels()` in `gmail.py`
+3. ✅ `GET /api/folders` — parallel fetch from all 3 accounts with exception isolation
+4. ✅ `GET /api/folders/suggestions?sender=` — top 5 by filing count for sender domain
+5. ✅ `POST /api/email/{id}/file` — same-account move + filing_history record
+6. ✅ Folder picker modal in dashboard — searchable, grouped by account, session-cached
+7. ✅ Smart suggestions shown at top of picker after first filing for a sender domain
+8. ⬜ Cross-account filing — lower priority, not yet implemented
+
+### 12.7 — GitHub backup (Pending — needs one-time setup)
+
+Git is initialised, `.gitignore` is in place, and all safe files are staged. Sensitive files excluded: `config/.env`, `config/tokens_graph.json`, `config/tokens_gmail.json`, `config/agent.db`, `logs/`, `__pycache__/`, `.DS_Store`.
+
+**To complete:**
+1. Open Terminal and run `gh auth login` — choose GitHub.com → HTTPS → Login with a web browser
+2. Come back to Claude Code — it will create the private repo, commit, and push automatically
+
+The repo should be **private** (contains business prompts, client-facing copy, and system architecture).
+
+### 12.8 — Phase 7 — Telegram integration (Priority 5)
+Mobile channel for reviewing and actioning emails while travelling. Library: `python-telegram-bot`.
+
+### 12.9 — Mac mini migration (When hardware arrives)
+1. Update `TAILSCALE_IP` in `config/.env`
+2. Confirm Ollama menu bar app starts at login
+3. Re-authenticate both OAuth accounts (tokens are machine-bound)
+4. Copy `email-agent` script to `/opt/homebrew/bin/` with `sudo`
+5. Test full stack before decommissioning MacBook Pro as server

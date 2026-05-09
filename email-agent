@@ -1,0 +1,396 @@
+#!/bin/zsh
+
+# ============================================================
+# email-agent — start | stop | restart | debug | status
+# ============================================================
+
+PROJECT_DIR="$HOME/email-agent"
+VENV_UVICORN="$PROJECT_DIR/venv/bin/uvicorn"
+LOG_DIR="$PROJECT_DIR/logs"
+PID_DIR="$PROJECT_DIR/logs"
+OLLAMA_API="http://localhost:11434/api/tags"
+SERVER_PORT="8000"
+
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+RED='\033[0;31m'
+BLUE='\033[0;34m'
+BOLD='\033[1m'
+NC='\033[0m'
+
+ok()   { echo "${GREEN}  ✓ $1${NC}"; }
+warn() { echo "${YELLOW}  ⚠ $1${NC}"; }
+fail() { echo "${RED}  ✗ $1${NC}"; }
+info() { echo "${BLUE}  → $1${NC}"; }
+head() { echo "${BOLD}$1${NC}"; }
+
+# ============================================================
+# HELPERS
+# ============================================================
+
+get_tailscale_ip() {
+    tailscale ip -4 2>/dev/null
+}
+
+check_tailscale() {
+    # Retry up to 5 seconds — Tailscale may need a moment to initialise
+    for i in {1..5}; do
+        if tailscale status &>/dev/null; then
+            return 0
+        fi
+        if [ $i -eq 1 ]; then
+            info "Waiting for Tailscale..."
+        fi
+        sleep 1
+    done
+    fail "Tailscale is not connected"
+    echo "   Run: tailscale up"
+    return 1
+}
+
+ollama_running() {
+    curl -sf "$OLLAMA_API" &>/dev/null
+}
+
+server_running() {
+    [ -f "$PID_DIR/server.pid" ] && kill -0 "$(cat $PID_DIR/server.pid)" 2>/dev/null
+}
+
+server_responding() {
+    local ip="$1"
+    curl -sf "http://$ip:$SERVER_PORT/" &>/dev/null
+}
+
+purge_old_logs() {
+    find "$LOG_DIR" -name "*.log" -mtime +14 -delete 2>/dev/null
+}
+
+# ============================================================
+# START
+# ============================================================
+
+cmd_start() {
+    echo ""
+    head "⚡ Email Agent — Starting"
+    echo "=========================="
+
+    mkdir -p "$LOG_DIR"
+    purge_old_logs
+
+    # --- Tailscale ---
+    echo ""
+    head "1. Tailscale"
+    if ! check_tailscale; then exit 1; fi
+    local ts_ip=$(get_tailscale_ip)
+    ok "Connected — IP: $ts_ip"
+
+    # --- Ollama ---
+    echo ""
+    head "2. Ollama"
+    local ollama_started_by_us=false
+
+    if ollama_running; then
+        ok "Already running"
+    else
+        info "Starting Ollama..."
+        ollama serve >> "$LOG_DIR/ollama.log" 2>&1 &
+        echo $! > "$PID_DIR/ollama.pid"
+        ollama_started_by_us=true
+
+        for i in {1..10}; do
+            if ollama_running; then
+                ok "Started (PID $(cat $PID_DIR/ollama.pid))"
+                break
+            fi
+            if [ $i -eq 10 ]; then
+                fail "Ollama did not start within 10 seconds"
+                fail "Check $LOG_DIR/ollama.log"
+                exit 1
+            fi
+            sleep 1
+        done
+    fi
+
+    if curl -sf "$OLLAMA_API" | grep -q "phi4-mini"; then
+        ok "phi4-mini:latest available"
+    else
+        warn "phi4-mini:latest not found — run: ollama pull phi4-mini:latest"
+    fi
+
+    # --- Server ---
+    echo ""
+    head "3. Email Agent Server"
+
+    if server_running; then
+        local pid=$(cat "$PID_DIR/server.pid")
+        warn "Already running (PID $pid)"
+        warn "Use 'email-agent restart' to restart"
+        echo ""
+        echo "=========================="
+        ok "Email Agent already running"
+        echo "   Dashboard: http://$ts_ip:$SERVER_PORT"
+        echo "=========================="
+        echo ""
+        return 0
+    fi
+
+    if [ "$ollama_started_by_us" = true ]; then
+        echo "yes" > "$PID_DIR/ollama_started_by_us"
+    else
+        rm -f "$PID_DIR/ollama_started_by_us"
+    fi
+
+    cd "$PROJECT_DIR"
+
+    info "Starting server..."
+    $VENV_UVICORN main:app \
+        --host "$ts_ip" \
+        --port "$SERVER_PORT" \
+        >> "$LOG_DIR/server.log" 2>&1 &
+
+    local server_pid=$!
+    echo $server_pid > "$PID_DIR/server.pid"
+
+    info "Waiting for server to respond..."
+    for i in {1..8}; do
+        if server_responding "$ts_ip"; then
+            ok "Started (PID $server_pid)"
+            break
+        fi
+        if ! kill -0 "$server_pid" 2>/dev/null; then
+            fail "Server process died — check $LOG_DIR/server.log"
+            rm -f "$PID_DIR/server.pid"
+            exit 1
+        fi
+        if [ $i -eq 8 ]; then
+            warn "Server started but not yet responding — check $LOG_DIR/server.log"
+        fi
+        sleep 1
+    done
+
+    echo ""
+    echo "=========================="
+    ok "Email Agent is running"
+    echo "   Dashboard: http://$ts_ip:$SERVER_PORT"
+    echo "   Logs:      $LOG_DIR/"
+    echo "   Stop:      email-agent stop"
+    echo "=========================="
+    echo ""
+}
+
+# ============================================================
+# STOP
+# ============================================================
+
+cmd_stop() {
+    echo ""
+    head "⚡ Email Agent — Stopping"
+    echo "=========================="
+
+    # --- Server ---
+    echo ""
+    head "1. Server"
+    if [ -f "$PID_DIR/server.pid" ]; then
+        local pid=$(cat "$PID_DIR/server.pid")
+        if kill -0 "$pid" 2>/dev/null; then
+            kill "$pid"
+            for i in {1..5}; do
+                if ! kill -0 "$pid" 2>/dev/null; then
+                    ok "Stopped (PID $pid)"
+                    break
+                fi
+                if [ $i -eq 5 ]; then
+                    warn "Force stopping..."
+                    kill -9 "$pid" 2>/dev/null
+                    ok "Force stopped"
+                fi
+                sleep 1
+            done
+        else
+            warn "Not running (stale PID file)"
+        fi
+        rm -f "$PID_DIR/server.pid"
+    else
+        warn "No PID file — server may not have been started by email-agent"
+    fi
+
+    # --- Ollama ---
+    echo ""
+    head "2. Ollama"
+    if [ -f "$PID_DIR/ollama_started_by_us" ]; then
+        if [ -f "$PID_DIR/ollama.pid" ]; then
+            local pid=$(cat "$PID_DIR/ollama.pid")
+            if kill -0 "$pid" 2>/dev/null; then
+                kill "$pid"
+                for i in {1..5}; do
+                    if ! kill -0 "$pid" 2>/dev/null; then
+                        ok "Stopped (PID $pid)"
+                        break
+                    fi
+                    if [ $i -eq 5 ]; then
+                        warn "Force stopping..."
+                        kill -9 "$pid" 2>/dev/null
+                        ok "Force stopped"
+                    fi
+                    sleep 1
+                done
+            else
+                warn "Not running (stale PID file)"
+            fi
+            rm -f "$PID_DIR/ollama.pid"
+        fi
+        rm -f "$PID_DIR/ollama_started_by_us"
+    else
+        ok "Left running (not started by email-agent)"
+    fi
+
+    echo ""
+    echo "=========================="
+    ok "Email Agent stopped"
+    echo "=========================="
+    echo ""
+}
+
+# ============================================================
+# STATUS
+# ============================================================
+
+cmd_status() {
+    echo ""
+    head "⚡ Email Agent — Status"
+    echo "=========================="
+
+    # Tailscale
+    echo ""
+    head "Tailscale"
+    if tailscale status &>/dev/null; then
+        local ip=$(get_tailscale_ip)
+        ok "Connected — IP: $ip"
+    else
+        fail "Not connected — run: tailscale up"
+    fi
+
+    # Ollama
+    echo ""
+    head "Ollama"
+    if ollama_running; then
+        ok "Running"
+        if curl -sf "$OLLAMA_API" | grep -q "phi4-mini"; then
+            ok "phi4-mini:latest loaded"
+        else
+            warn "phi4-mini:latest not found"
+        fi
+    else
+        fail "Not running"
+    fi
+
+    # Server
+    echo ""
+    head "Email Agent Server"
+    if server_running; then
+        local pid=$(cat "$PID_DIR/server.pid")
+        local ip=$(get_tailscale_ip)
+        ok "Running (PID $pid)"
+        if server_responding "$ip"; then
+            ok "Responding at http://$ip:$SERVER_PORT"
+        else
+            warn "Process running but not responding to HTTP"
+        fi
+    else
+        fail "Not running"
+    fi
+
+    # Log files
+    echo ""
+    head "Recent log activity"
+    if [ -f "$LOG_DIR/server.log" ]; then
+        info "Server log (last 5 lines):"
+        tail -5 "$LOG_DIR/server.log" | sed 's/^/     /'
+    else
+        info "No server log yet"
+    fi
+
+    echo ""
+    echo "=========================="
+    echo ""
+}
+
+# ============================================================
+# RESTART
+# ============================================================
+
+cmd_restart() {
+    echo ""
+    head "⚡ Email Agent — Restarting"
+    cmd_stop
+    sleep 1
+    cmd_start
+}
+
+# ============================================================
+# DEBUG
+# ============================================================
+
+cmd_debug() {
+    echo ""
+    head "⚡ Email Agent — Debug mode (foreground)"
+    echo "   Ctrl+C to stop"
+    echo ""
+
+    mkdir -p "$LOG_DIR"
+
+    if ! check_tailscale; then exit 1; fi
+    local ts_ip=$(get_tailscale_ip)
+    ok "Tailscale: $ts_ip"
+
+    if ollama_running; then
+        ok "Ollama: running"
+    else
+        warn "Ollama not running — starting..."
+        ollama serve >> "$LOG_DIR/ollama.log" 2>&1 &
+        echo $! > "$PID_DIR/ollama.pid"
+        echo "yes" > "$PID_DIR/ollama_started_by_us"
+        sleep 3
+        if ollama_running; then
+            ok "Ollama: started"
+        else
+            fail "Ollama failed to start — check $LOG_DIR/ollama.log"
+            exit 1
+        fi
+    fi
+
+    echo ""
+    info "Starting server in foreground with --reload..."
+    echo ""
+
+    cd "$PROJECT_DIR"
+    $VENV_UVICORN main:app \
+        --host "$ts_ip" \
+        --port "$SERVER_PORT" \
+        --reload
+}
+
+# ============================================================
+# ENTRY POINT
+# ============================================================
+
+case "$1" in
+    start)   cmd_start ;;
+    stop)    cmd_stop ;;
+    restart) cmd_restart ;;
+    debug)   cmd_debug ;;
+    status)  cmd_status ;;
+    *)
+        echo ""
+        echo "Usage: email-agent <command>"
+        echo ""
+        echo "Commands:"
+        echo "  start    Start all services in background"
+        echo "  stop     Stop all services"
+        echo "  restart  Stop then start"
+        echo "  debug    Start in foreground with live logs and --reload"
+        echo "  status   Show status of all services"
+        echo ""
+        exit 1
+        ;;
+esac
