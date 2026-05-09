@@ -170,10 +170,19 @@ cmd_start() {
 
     # Auth proxy — forwards localhost:8000 → Tailscale IP so Microsoft OAuth
     # callbacks (which must use localhost for HTTP) reach the real server
-    "$PROJECT_DIR/venv/bin/python3" "$PROJECT_DIR/auth_proxy.py" \
+    # nohup + disown prevents SIGHUP killing the proxy when this script exits
+    pkill -f "auth_proxy.py" 2>/dev/null; sleep 0.5
+    nohup "$PROJECT_DIR/venv/bin/python3" "$PROJECT_DIR/auth_proxy.py" \
         >> "$LOG_DIR/server.log" 2>&1 &
-    echo $! > "$PID_DIR/auth_proxy.pid"
-    ok "Auth proxy started (localhost:8000 → $ts_ip:$SERVER_PORT)"
+    local proxy_pid=$!
+    disown $proxy_pid
+    echo $proxy_pid > "$PID_DIR/auth_proxy.pid"
+    sleep 1
+    if kill -0 $proxy_pid 2>/dev/null; then
+        ok "Auth proxy started (localhost:8000 → $ts_ip:$SERVER_PORT, PID $proxy_pid)"
+    else
+        warn "Auth proxy failed to start — check $LOG_DIR/server.log"
+    fi
 
     echo ""
     echo "=========================="
@@ -218,14 +227,12 @@ cmd_stop() {
     rm -f "$PID_DIR/server.pid"
 
     # --- Auth proxy ---
-    if [ -f "$PID_DIR/auth_proxy.pid" ]; then
-        local pid=$(cat "$PID_DIR/auth_proxy.pid")
-        if kill -0 "$pid" 2>/dev/null; then
-            kill "$pid" 2>/dev/null
-            ok "Auth proxy stopped (PID $pid)"
-        fi
-        rm -f "$PID_DIR/auth_proxy.pid"
+    local proxy_pid=$(pgrep -f "auth_proxy.py" 2>/dev/null | head -1)
+    if [ -n "$proxy_pid" ]; then
+        kill "$proxy_pid" 2>/dev/null
+        ok "Auth proxy stopped (PID $proxy_pid)"
     fi
+    rm -f "$PID_DIR/auth_proxy.pid"
 
     # --- Ollama ---
     echo ""
