@@ -331,7 +331,7 @@ Today's goal: [one sentence]
 
 ## 11. Current state (update this after every session)
 
-**Last updated:** 2026-05-09. Cross-account filing complete. Secret rotation completed (financial + Gmail). Auth proxy added for localhost OAuth callbacks. Restart script fixed to kill server by process name instead of PID file.
+**Last updated:** 2026-05-09. Cross-account filing complete. Secret rotation completed (financial + Gmail). Auth proxy added for localhost OAuth callbacks. Restart script fixed to kill server by process name instead of PID file. Auth proxy auto-start fixed — nohup+disown ensures proxy survives script exit; stop uses pgrep to find real process.
 
 **All phases 1–6: Complete. All three accounts: Complete.**
 
@@ -362,7 +362,7 @@ Today's goal: [one sentence]
 - Sort buttons toggle direction on repeated click. Priority defaults ascending (Action Required at top). Date defaults descending (newest first). Arrow in button label shows current direction. Both have tiebreakers.
 - Manual folder filing: "📁 File…" button on every inbox email opens a searchable folder picker grouped by account (Financial Planning, Personal, Positive Tax). Folders fetched from all three accounts simultaneously via `GET /api/folders`. Filing calls `POST /api/email/{id}/file`, moves email on the server, records the action in `filing_history` SQLite table, marks status as `filed`. Filed emails appear under History → 📁 Filed tab.
 - Smart filing suggestions: after the first filing, future opens of the picker show a "Suggested" section at top for emails from the same sender domain, ranked by filing count. Powered by `GET /api/folders/suggestions?sender={raw_sender}`.
-- Cross-account filing not yet supported — same-account only. Returns a clear error if attempted.
+- Cross-account filing supported — MIME export/import pipeline. Source archived after successful copy. Graph imports land in draft state (API limitation — content intact).
 - Account filter — All / Financial Planning / Positive Tax / Personal
 - Classification filter within account in inbox mode
 - History sub-tabs — Sent, Archived, Deleted, All
@@ -388,6 +388,7 @@ Today's goal: [one sentence]
 
 **All files:**
 - `~/email-agent/email-agent` (also `/opt/homebrew/bin/email-agent`)
+- `~/email-agent/auth_proxy.py`
 - `~/email-agent/main.py`
 - `~/email-agent/agent/__init__.py`
 - `~/email-agent/agent/actions.py`
@@ -427,6 +428,7 @@ Today's goal: [one sentence]
 - `graph.file_to_folder(account, email_id, folder_id)` and `gmail.file_to_label(email_id, label_id)` — move by ID directly, no name lookup. Distinct from `move_email()` which takes a folder name and creates if missing.
 - Filing domain extraction: uses `extract_email_addresses()` to parse sender, then splits on `@` to get domain for `filing_history` key.
 - Sort state: `sortDirs = { classification: 'asc', date: 'desc' }`. `setSort(mode)` toggles direction if mode is already active, else switches mode keeping its stored direction. `updateSortButtons()` syncs button text and active class.
+- `auth_proxy.py` — asyncio TCP proxy listening on `127.0.0.1:8000`, forwards to `TAILSCALE_IP:8000`. Required because Azure OAuth only allows HTTP for localhost redirect URIs. Started by `email-agent start` using `nohup ... & disown` so it survives script exit. Stopped by `pgrep -f "auth_proxy.py"`. Health-checked with `kill -0` after 1s. PID saved in `logs/auth_proxy.pid`.
 
 ---
 
