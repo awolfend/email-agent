@@ -331,7 +331,7 @@ Today's goal: [one sentence]
 
 ## 11. Current state (update this after every session)
 
-**Last updated:** 2026-05-09. History limit raised to 1000. Manual action labels now recorded accurately (archived/deleted/replied/filed/calendar_accepted/calendar_declined). Action bar button colors: green=send/accept, blue=reply, gray=archive, teal=file, red=delete/decline, orange=flag. GitHub backup live at https://github.com/awolfend/email-agent (private).
+**Last updated:** 2026-05-09. Cross-account filing complete (12.6 fully done). History limit 1000. Manual action labels recorded accurately. Button colors: green=send/accept, blue=reply, gray=archive, teal=file, red=delete/decline, orange=flag. GitHub backup: https://github.com/awolfend/email-agent (private).
 
 **All phases 1–6: Complete. All three accounts: Complete.**
 
@@ -514,7 +514,7 @@ Footers stored in SQLite `settings` table as `footer_financial` and `footer_gmai
 5. ✅ `POST /api/email/{id}/file` — same-account move + filing_history record
 6. ✅ Folder picker modal in dashboard — searchable, grouped by account, session-cached
 7. ✅ Smart suggestions shown at top of picker after first filing for a sender domain
-8. ⬜ Cross-account filing — lower priority, not yet implemented
+8. ✅ Cross-account filing — MIME export/import. Graph↔Graph: $value export + mailFolders/{id}/messages import. Graph↔Gmail: Graph $value export + Gmail uploadType=media import + label apply. Gmail→Graph: format=raw export + base64url decode + Graph MIME import. Source archived after successful copy. Note: Graph imports land in draft state (API limitation).
 
 ### 12.7 — GitHub backup ✅ Complete
 

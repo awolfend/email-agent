@@ -22,6 +22,8 @@ from connectors.graph import (
     decline_calendar_event as graph_decline_calendar,
     list_folders as graph_list_folders,
     file_to_folder as graph_file_to_folder,
+    export_mime as graph_export_mime,
+    import_mime as graph_import_mime,
 )
 from connectors.gmail import (
     get_auth_url as gmail_auth_url,
@@ -37,6 +39,8 @@ from connectors.gmail import (
     decline_calendar_event as gmail_decline_calendar,
     list_labels as gmail_list_labels,
     file_to_label as gmail_file_to_label,
+    export_mime as gmail_export_mime,
+    import_mime as gmail_import_mime,
 )
 from db.database import (
     init_db, get_queue, get_stats,
@@ -301,17 +305,39 @@ async def api_file(email_id: str, body: FileRequest):
         return JSONResponse({"ok": False, "error": "Email not found"}, status_code=404)
     if body.target_account not in ("financial", "personal", "gmail"):
         return JSONResponse({"ok": False, "error": f"Unknown account: {body.target_account}"}, status_code=400)
-    if email["account"] != body.target_account:
-        return JSONResponse({"ok": False, "error": "Cross-account filing not yet supported"}, status_code=400)
+
+    source = email["account"]
+    target = body.target_account
+
     try:
-        if body.target_account in ("financial", "personal"):
-            await graph_file_to_folder(body.target_account, email_id, body.folder_id)
+        if source == target:
+            # Same-account: direct move
+            if target in ("financial", "personal"):
+                await graph_file_to_folder(target, email_id, body.folder_id)
+            else:
+                await gmail_file_to_label(email_id, body.folder_id)
         else:
-            await gmail_file_to_label(email_id, body.folder_id)
+            # Cross-account: export MIME from source, import into target, archive source
+            if source in ("financial", "personal"):
+                mime_bytes = await graph_export_mime(source, email_id)
+            else:
+                mime_bytes = await gmail_export_mime(email_id)
+
+            if target in ("financial", "personal"):
+                await graph_import_mime(target, body.folder_id, mime_bytes)
+            else:
+                await gmail_import_mime(body.folder_id, mime_bytes)
+
+            # Archive source after successful import
+            if source in ("financial", "personal"):
+                await graph_archive_email(source, email_id)
+            else:
+                await gmail_archive_email(email_id)
+
         sender_addrs = extract_email_addresses(email.get("sender", ""))
         if sender_addrs and "@" in sender_addrs[0]:
             domain = sender_addrs[0].split("@")[-1].lower()
-            await record_filing(domain, body.target_account, body.folder_id, body.folder_name)
+            await record_filing(domain, target, body.folder_id, body.folder_name)
         await update_email_status(email_id, "filed", "filed")
         return {"ok": True}
     except Exception as e:

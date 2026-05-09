@@ -417,3 +417,32 @@ async def file_to_folder(account: str, email_id: str, folder_id: str):
             json={"destinationId": folder_id},
         )
         response.raise_for_status()
+
+
+async def export_mime(account: str, email_id: str) -> bytes:
+    """Export a message as raw RFC 5322 MIME bytes — used for cross-account filing."""
+    token = await get_valid_token(account)
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        resp = await client.get(
+            f"{_mailbox_base(account)}/messages/{email_id}/$value",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        resp.raise_for_status()
+        return resp.content
+
+
+async def import_mime(account: str, folder_id: str, mime_bytes: bytes) -> str:
+    """Import raw MIME bytes into a specific folder — used for cross-account filing.
+    Creates a copy of the message in the target folder."""
+    token = await get_valid_token(account)
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        resp = await client.post(
+            f"{_mailbox_base(account)}/mailFolders/{folder_id}/messages",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "text/plain",
+            },
+            content=mime_bytes,
+        )
+        resp.raise_for_status()
+        return resp.json().get("id", "")
