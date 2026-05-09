@@ -14,6 +14,7 @@ CLIENT_SECRET_PERSONAL = os.getenv("AZURE_CLIENT_SECRET_PERSONAL")
 TENANT_ID = os.getenv("AZURE_TENANT_ID")
 PERSONAL_EMAIL = os.getenv("PERSONAL_EMAIL", "anthony@wolfenden.net")
 
+TAILSCALE_IP = os.getenv("TAILSCALE_IP", "localhost")
 AUTHORITY = f"https://login.microsoftonline.com/{TENANT_ID}"
 SCOPES = "Mail.ReadWrite Mail.Send Calendars.ReadWrite User.Read offline_access"
 GRAPH_BASE = "https://graph.microsoft.com/v1.0"

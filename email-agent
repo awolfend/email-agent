@@ -168,6 +168,13 @@ cmd_start() {
         sleep 1
     done
 
+    # Auth proxy — forwards localhost:8000 → Tailscale IP so Microsoft OAuth
+    # callbacks (which must use localhost for HTTP) reach the real server
+    "$PROJECT_DIR/venv/bin/python3" "$PROJECT_DIR/auth_proxy.py" \
+        >> "$LOG_DIR/server.log" 2>&1 &
+    echo $! > "$PID_DIR/auth_proxy.pid"
+    ok "Auth proxy started (localhost:8000 → $ts_ip:$SERVER_PORT)"
+
     echo ""
     echo "=========================="
     ok "Email Agent is running"
@@ -190,28 +197,34 @@ cmd_stop() {
     # --- Server ---
     echo ""
     head "1. Server"
-    if [ -f "$PID_DIR/server.pid" ]; then
-        local pid=$(cat "$PID_DIR/server.pid")
-        if kill -0 "$pid" 2>/dev/null; then
-            kill "$pid"
-            for i in {1..5}; do
-                if ! kill -0 "$pid" 2>/dev/null; then
-                    ok "Stopped (PID $pid)"
-                    break
-                fi
-                if [ $i -eq 5 ]; then
-                    warn "Force stopping..."
-                    kill -9 "$pid" 2>/dev/null
-                    ok "Force stopped"
-                fi
-                sleep 1
-            done
-        else
-            warn "Not running (stale PID file)"
-        fi
-        rm -f "$PID_DIR/server.pid"
+    # Always kill by process name — prevents stale PID file leaving old server running
+    local running_pid=$(pgrep -f "uvicorn main:app" 2>/dev/null | head -1)
+    if [ -n "$running_pid" ]; then
+        kill "$running_pid" 2>/dev/null
+        for i in {1..5}; do
+            if ! kill -0 "$running_pid" 2>/dev/null; then
+                ok "Stopped (PID $running_pid)"
+                break
+            fi
+            if [ $i -eq 5 ]; then
+                kill -9 "$running_pid" 2>/dev/null
+                ok "Force stopped (PID $running_pid)"
+            fi
+            sleep 1
+        done
     else
-        warn "No PID file — server may not have been started by email-agent"
+        warn "Server not running"
+    fi
+    rm -f "$PID_DIR/server.pid"
+
+    # --- Auth proxy ---
+    if [ -f "$PID_DIR/auth_proxy.pid" ]; then
+        local pid=$(cat "$PID_DIR/auth_proxy.pid")
+        if kill -0 "$pid" 2>/dev/null; then
+            kill "$pid" 2>/dev/null
+            ok "Auth proxy stopped (PID $pid)"
+        fi
+        rm -f "$PID_DIR/auth_proxy.pid"
     fi
 
     # --- Ollama ---
