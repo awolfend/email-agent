@@ -170,7 +170,7 @@ async def get_emails(account: str, count: int = None) -> list:
         url = f"{base}/mailFolders/inbox/messages"
         params = {
             "$top": 100,
-            "$select": "id,subject,from,receivedDateTime,bodyPreview,isRead,body",
+            "$select": "id,internetMessageId,subject,from,receivedDateTime,bodyPreview,isRead,body",
             "$orderby": "receivedDateTime desc",
         }
 

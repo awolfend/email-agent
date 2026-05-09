@@ -50,6 +50,8 @@ from db.database import (
     get_setting, set_setting,
     record_filing, get_filing_suggestions,
     get_auth_errors,
+    upsert_sender_rule, get_all_sender_rules,
+    delete_sender_rule, clear_all_sender_rules,
 )
 from agent.poller import start_scheduler, poll_all
 from agent.drafter import generate_draft
@@ -139,6 +141,9 @@ async def api_status(email_id: str, body: StatusUpdate):
 @app.post("/api/email/{email_id}/reclassify")
 async def api_reclassify(email_id: str, body: ClassificationUpdate):
     await update_email_classification(email_id, body.classification)
+    email = await get_email_by_id(email_id)
+    if email and email.get("sender"):
+        await upsert_sender_rule(email["sender"], body.classification, source="manual")
     return {"ok": True}
 
 @app.post("/api/email/{email_id}/draft")
@@ -382,6 +387,21 @@ async def api_clear_history(body: ClearHistoryRequest):
     """Bulk clear history records by scope. Does not affect the live mailbox."""
     count = await clear_history(body.scope)
     return {"ok": True, "cleared": count}
+
+@app.get("/api/sender-rules")
+async def api_get_sender_rules():
+    return JSONResponse(await get_all_sender_rules())
+
+@app.delete("/api/sender-rules")
+async def api_clear_sender_rules():
+    count = await clear_all_sender_rules()
+    return {"ok": True, "cleared": count}
+
+@app.delete("/api/sender-rules/{sender:path}")
+async def api_delete_sender_rule(sender: str):
+    deleted = await delete_sender_rule(sender)
+    return {"ok": deleted}
+
 
 @app.post("/api/poll")
 async def api_poll():
