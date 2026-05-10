@@ -332,10 +332,27 @@ Today's goal: [one sentence]
 
 ## 11. Current state (update this after every session)
 
-**Last updated:** 2026-05-10 (session 3). Three significant improvements to agent reliability and intelligence:
-1. **Re-filing bug fixed** — emails restored to inbox by the user were being re-actioned because Microsoft Graph's `id` field is folder-scoped (changes on every move). Fixed by using `internetMessageId` (RFC 2822 Message-ID header, globally stable) as the DB lookup key while keeping the Graph `id` for API calls.
-2. **DB auto-pruning** — non-pending `action_log` records older than 90 days are deleted automatically after each full poll cycle. Prevents indefinite growth from emails actioned by Outlook directly or left in history. `sender_rules` table is exempt.
-3. **Sender memory (classification rules)** — the classifier now remembers sender patterns. After 2 consistent LLM classifications from the same sender, a rule fires on all future emails from that sender (LLM bypassed). Manual reclassification via the UI immediately creates a sticky rule that the LLM cannot override. Rules tracked in a separate `sender_rules` table (never pruned). Management endpoints: `GET /api/sender-rules`, `DELETE /api/sender-rules`, `DELETE /api/sender-rules/{sender}`.
+**Last updated:** 2026-05-10 (session 5). Major reliability and correctness pass across all three connectors and the entire action pipeline. All known bugs from the audit are fixed. System is feature-complete and stable.
+
+### What changed in session 5
+
+1. **Financial inbox showing 0 emails (silent TypeError)** — `get_valid_token()` compared `datetime.utcnow()` (naive, no tz) against an ISO string like `"2026-05-09T12:00:00+00:00"` (aware). Python raises `TypeError` which was silently caught by the outer `except Exception` in the poller, logging an auth error but no poll ever succeeding. Fixed by `_parse_expires_at()` helper and `datetime.now(timezone.utc)` throughout `graph.py` and `gmail.py`. Auth error keywords now include `"offset-naive"` and `"offset-aware"` to catch future recurrence.
+
+2. **Archive / delete / calendar actions using wrong Graph ID** — action endpoints in `main.py` were passing `email_id` (the stable RFC 2822 `internetMessageId`) to Graph API, which requires the folder-scoped `id`. Fixed by storing `graph_id` at poll time in `action_log` and using `graph_id = email.get("graph_id") or email_id` at every action call site.
+
+3. **Unarchive 404** — the stored `graph_id` goes stale after a message is moved to archive (Graph assigns a new ID per folder). Fixed by calling `get_message_graph_id(account, internet_message_id)` at unarchive time — searches Graph for the message by `internetMessageId` and returns the current folder-scoped ID regardless of where it's been moved.
+
+4. **`refresh_token()` missing `raise_for_status()`** — a 4xx from the token endpoint was silently stored as the token dict. Fixed; all HTTP calls in both connectors now call `raise_for_status()`.
+
+5. **Gmail sender rules mismatch** — raw `From` header was stored as the sender key (e.g. `"Acme <news@acme.com>"`). Sender rules keyed on bare address never matched. Fixed: `poll_gmail` now uses `parseaddr()` to extract the bare address before storing.
+
+6. **Sender rules overhaul** — removed learned rules entirely. AI classifications are no longer written to `sender_rules`. Only manual reclassifications via `api_reclassify` create/increment rules. count=1 = pending (no effect), count≥2 = active (overrides AI). Reclassifying to a different category resets count to 1. Pollers check `rule['source'] == 'manual' and rule['count'] >= 2`. UI shows pending/active state clearly. Per-row delete fixed with `unquote()` (URL decoding) and `data.ok` check.
+
+7. **Inbox as source of truth** — fundamental redesign: if an email is present in the live inbox, it must be pending in the app, regardless of prior DB status. `ensure_inbox_state(email_id, graph_id)` does a single UPDATE resetting status to pending and refreshing graph_id. Any email pending in DB but missing from inbox gets archived via `mark_missing_as_archived()`.
+
+8. **Poll on page load / tab focus** — silent background poll triggered on page load (UI renders from cached DB first, refreshes after 8s) and on tab regain-focus (throttled to 60s minimum between polls via `_lastPollAt`). Reduces sync delay without infrastructure changes.
+
+9. **Calendar implemented end-to-end** — Outlook: single Graph call (`/messages/{graph_id}/accept|decline`, `sendResponse: true`). Gmail: multi-step ICS extraction → Calendar API event lookup by UID → PATCH attendee responseStatus → `sendUpdates: all`. Both wired to UI buttons (✓ Accept / ✕ Decline) on calendar-classified emails. Requires `https://www.googleapis.com/auth/calendar` scope — included in Gmail OAuth flow.
 
 **All phases 1–6: Complete. All three accounts: Complete.**
 
@@ -410,9 +427,12 @@ Today's goal: [one sentence]
 3. Hit Poll Now — verify inbox counts match Outlook and Gmail
 4. Choose next item from Section 12
 
-**Known issues:**
-- `GEMINI_API_KEY` not yet set (deferred)
-- Gmail sender rules less reliable — `poll_gmail` stores the raw `from` header (e.g. `"Acme Newsletter <news@acme.com>"`) as the rule key. If the display name varies across emails from the same sender address, they create separate rules. Graph accounts extract just the email address and are not affected.
+**Known issues / gaps:**
+- `GEMINI_API_KEY` not yet set (deferred — Claude + OpenAI fallback covers all draft needs)
+- **Silent deletion failure** — `api_delete` catches all exceptions and returns `{"ok": True}` even if the Graph/Gmail delete call failed. DB status is still updated to 'deleted'. Low frequency but misleading.
+- **Hardcoded folder names** — "Junk Email", "Newsletters", "Notifications" in `actions.py`. If a mailbox uses different names, autonomous moves silently fail (email stays pending). Not a current problem.
+- **Send flow unconfirmed (Gmail)** — user reported clicking Send on a Gmail email produced no outbox entry. DB shows `status='sent'` so the code path completed without exception. Root cause unconfirmed; user was going to retry.
+- **`stub` column** — exists in schema and filters queries (`WHERE stub = 0`) but is never set to 1. Dead column, harmless.
 
 **All files:**
 - `~/email-agent/email-agent` (also `/opt/homebrew/bin/email-agent`)
@@ -453,7 +473,7 @@ Today's goal: [one sentence]
 - `filing_history` table: `(sender_domain, target_folder_id)` unique index. `record_filing()` upserts and increments count. `get_filing_suggestions(sender_domain, limit=5)` returns top targets ordered by count DESC.
 - **Stable email ID (Graph accounts):** `get_emails()` in `graph.py` requests `internetMessageId` in `$select`. In `poll_financial` and `poll_personal`: `stable_id = email.get("internetMessageId") or graph_id` is stored in `action_log.email_id` and used for all DB operations; `graph_id = email.get("id")` is passed to `execute_action` and all move/delete API calls. This means user overrides survive the email being moved and restored — the stable_id never changes.
 - **DB pruning:** `prune_old_records(days=90)` in `db/database.py` deletes `action_log` records WHERE `status != 'pending' AND timestamp < cutoff`. Called from `poll_all()` after all three pollers complete. Does not touch `sender_rules`, `sent_examples`, `voice_profiles`, `filing_history`, or `settings`.
-- **`sender_rules` table:** `sender TEXT PRIMARY KEY, classification TEXT, count INTEGER, source TEXT ('learned'|'manual'), created_at TEXT, last_seen TEXT`. Never pruned. `upsert_sender_rule(sender, classification, source)`: if source='manual' always overwrites; if source='learned' — same classification increments count, different classification on a learned rule decrements count (deletes at 0), different classification on a manual rule only updates last_seen. `get_sender_rule(sender)` returns the row or None. In each poller: check rule before LLM; if `rule['source']=='manual' or rule['count']>=2` use rule and skip LLM (also skip upsert); otherwise run LLM and call `upsert_sender_rule` with the result. Classifications of 'error' or 'unknown' are never stored as rules. `POST /api/email/{id}/reclassify` also calls `upsert_sender_rule(..., source='manual')` using the email's sender from DB.
+- **`sender_rules` table:** `sender TEXT PRIMARY KEY, classification TEXT, count INTEGER, source TEXT, created_at TEXT, last_seen TEXT`. Source is always `'manual'` — AI results are never stored. Never pruned. `upsert_sender_rule(sender, classification, source='manual')`: same classification → count+1; different classification → count resets to 1. `get_sender_rule(sender)` returns the row or None. In each poller: check rule before LLM; if `rule['source']=='manual' and rule['count']>=2` → use rule, skip LLM. count=1 is "pending" (no effect). Classifications of 'error', 'unknown', or '' are never stored. `POST /api/email/{id}/reclassify` calls `upsert_sender_rule(..., source='manual')`. UI shows count as "pending" (count=1) or "N ✓ active" (count≥2).
 - `graph.list_folders(account)` — fetches `mailFolders?$expand=childFolders`, returns flat list including one level of subfolders as "Parent / Child". Sorted alphabetically.
 - `gmail.list_labels()` — returns user-created labels only; excludes all `_GMAIL_SYSTEM_LABELS` and any `CATEGORY_` prefixed IDs.
 - `graph.file_to_folder(account, email_id, folder_id)` and `gmail.file_to_label(email_id, label_id)` — move by ID directly, no name lookup. Distinct from `move_email()` which takes a folder name and creates if missing.
