@@ -6,7 +6,7 @@ from connectors.graph import get_emails as graph_get_emails
 from connectors.gmail import get_emails as gmail_get_emails
 from agent.classifier import classify_email
 from agent.actions import execute_action
-from db.database import log_action, get_email_by_id, update_email_status, mark_missing_as_archived, set_auth_error, clear_auth_error, prune_old_records, get_sender_rule, upsert_sender_rule
+from db.database import log_action, get_email_by_id, update_email_status, ensure_inbox_state, mark_missing_as_archived, set_auth_error, clear_auth_error, prune_old_records, get_sender_rule, upsert_sender_rule
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -36,11 +36,15 @@ async def poll_financial():
             body = email.get("fullBody") or email.get("bodyPreview", "")
             received_at = email.get("receivedDateTime")
 
-            # Skip already actioned emails — use stable internetMessageId so user
-            # overrides survive the email being moved out and back to inbox
+            # Inbox is source of truth: if the email is here it must be pending.
+            # For known emails, refresh graph_id and restore status if needed.
+            # Only classify emails we have never seen before.
             existing = await get_email_by_id(stable_id)
-            if existing and existing.get("status") not in (None, "pending"):
-                logger.info(f"[financial] Skipping actioned: {subject[:50]} ({existing['status']})")
+            if existing:
+                prev = existing.get("status")
+                if prev not in (None, "pending"):
+                    logger.info(f"[financial] Back in inbox (was {prev}): {subject[:50]}")
+                await ensure_inbox_state(stable_id, graph_id)
                 continue
 
             rule = await get_sender_rule(sender)
@@ -112,10 +116,12 @@ async def poll_gmail():
             body = email.get("fullBody") or email.get("snippet", "")
             received_at = parse_gmail_date(email.get("date", ""))
 
-            # Skip already actioned emails
             existing = await get_email_by_id(email_id)
-            if existing and existing.get("status") not in (None, "pending"):
-                logger.info(f"[gmail] Skipping actioned: {subject[:50]} ({existing['status']})")
+            if existing:
+                prev = existing.get("status")
+                if prev not in (None, "pending"):
+                    logger.info(f"[gmail] Back in inbox (was {prev}): {subject[:50]}")
+                await ensure_inbox_state(email_id, email_id)
                 continue
 
             rule = await get_sender_rule(sender)
@@ -188,8 +194,11 @@ async def poll_personal():
             received_at = email.get("receivedDateTime")
 
             existing = await get_email_by_id(stable_id)
-            if existing and existing.get("status") not in (None, "pending"):
-                logger.info(f"[personal] Skipping actioned: {subject[:50]} ({existing['status']})")
+            if existing:
+                prev = existing.get("status")
+                if prev not in (None, "pending"):
+                    logger.info(f"[personal] Back in inbox (was {prev}): {subject[:50]}")
+                await ensure_inbox_state(stable_id, graph_id)
                 continue
 
             rule = await get_sender_rule(sender)

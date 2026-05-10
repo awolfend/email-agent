@@ -2074,11 +2074,20 @@
 
     // ---- Poll ----
 
-    async function triggerPoll() {
-        showToast('⟳ Polling inboxes...');
+    let _lastPollAt = 0;
+
+    async function triggerPoll(silent = false) {
+        if (!silent) showToast('⟳ Polling inboxes...');
+        _lastPollAt = Date.now();
         await fetch('/api/poll', { method: 'POST' });
-        setTimeout(async () => { await loadQueue(); showToast('Poll complete'); }, 8000);
+        setTimeout(async () => { await loadQueue(); if (!silent) showToast('Poll complete'); }, 8000);
     }
+
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible' && Date.now() - _lastPollAt > 60000) {
+            triggerPoll(true);
+        }
+    });
 
     // ---- Clear history ----
 
@@ -2280,6 +2289,7 @@
     makeVerticalResizer();
 
     loadQueue();
+    triggerPoll(true);
     setInterval(loadQueue, 60000);
 </script>
 </body>
