@@ -75,7 +75,8 @@ async def poll_financial():
                 confidence=confidence,
                 notes=result.get("reason"),
                 body=body,
-                received_at=received_at
+                received_at=received_at,
+                graph_id=graph_id
             )
 
             if status != "pending":
@@ -91,7 +92,7 @@ async def poll_financial():
 
     except Exception as e:
         logger.error(f"Error polling financial inbox: {e}")
-        _AUTH_KEYWORDS = ("401", "No token", "OAuth", "invalid_grant", "invalid_client", "AADSTS", "Unauthorized", "unauthorized")
+        _AUTH_KEYWORDS = ("401", "No token", "OAuth", "invalid_grant", "invalid_client", "AADSTS", "Unauthorized", "unauthorized", "offset-naive", "offset-aware")
         if any(k in str(e) for k in _AUTH_KEYWORDS):
             await set_auth_error("financial", str(e))
 
@@ -165,7 +166,7 @@ async def poll_gmail():
 
     except Exception as e:
         logger.error(f"Error polling Gmail inbox: {e}")
-        _AUTH_KEYWORDS = ("401", "No token", "OAuth", "invalid_grant", "invalid_client", "AADSTS", "Unauthorized", "unauthorized")
+        _AUTH_KEYWORDS = ("401", "No token", "OAuth", "invalid_grant", "invalid_client", "AADSTS", "Unauthorized", "unauthorized", "offset-naive", "offset-aware")
         if any(k in str(e) for k in _AUTH_KEYWORDS):
             await set_auth_error("gmail", str(e))
 
@@ -223,7 +224,8 @@ async def poll_personal():
                 confidence=confidence,
                 notes=result.get("reason"),
                 body=body,
-                received_at=received_at
+                received_at=received_at,
+                graph_id=graph_id
             )
 
             if status != "pending":
@@ -238,7 +240,7 @@ async def poll_personal():
 
     except Exception as e:
         logger.error(f"Error polling personal inbox: {e}")
-        _AUTH_KEYWORDS = ("401", "No token", "OAuth", "invalid_grant", "invalid_client", "AADSTS", "Unauthorized", "unauthorized")
+        _AUTH_KEYWORDS = ("401", "No token", "OAuth", "invalid_grant", "invalid_client", "AADSTS", "Unauthorized", "unauthorized", "offset-naive", "offset-aware")
         if any(k in str(e) for k in _AUTH_KEYWORDS):
             await set_auth_error("personal", str(e))
 
