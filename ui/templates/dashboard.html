@@ -1970,7 +1970,9 @@
             table.style.display = '';
             tbody.innerHTML = rules.map(r => {
                 const lastSeen = r.last_seen ? new Date(r.last_seen).toLocaleDateString('en-AU', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
-                const countLabel = r.source === 'manual' ? '<span style="color:var(--text-dimmer)">—</span>' : r.count;
+                const countLabel = r.count >= 2
+                    ? `<span style="color:var(--green);font-weight:600">${r.count} ✓</span>`
+                    : `<span style="color:var(--text-dimmer)" title="Reclassify once more to activate">${r.count} pending</span>`;
                 return `<tr>
                     <td class="rules-sender">${escHtml(r.sender)}</td>
                     <td><span class="tag tag-${r.classification}">${escHtml(r.classification)}</span></td>
