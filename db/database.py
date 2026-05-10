@@ -60,6 +60,8 @@ async def init_db():
             ("received_at", "TEXT"),
             ("stub", "INTEGER DEFAULT 0"),
             ("graph_id", "TEXT"),
+            ("thread_id", "TEXT"),
+            ("orig_message_id", "TEXT"),
         ]:
             try:
                 await db.execute(f"ALTER TABLE action_log ADD COLUMN {col} {definition}")
@@ -112,7 +114,8 @@ async def log_action(account: str, email_id: str, subject: str, sender: str,
                      action: str, classification: str = None,
                      confidence: float = None, notes: str = None,
                      body: str = None, received_at: str = None,
-                     graph_id: str = None):
+                     graph_id: str = None, thread_id: str = None,
+                     orig_message_id: str = None):
     from datetime import datetime, timezone
     timestamp = datetime.now(timezone.utc).isoformat()
     async with aiosqlite.connect(DB_PATH) as db:
@@ -126,18 +129,22 @@ async def log_action(account: str, email_id: str, subject: str, sender: str,
                     timestamp = ?, classification = ?, confidence = ?,
                     notes = ?, action = ?, body = ?,
                     received_at = COALESCE(received_at, ?),
-                    graph_id = COALESCE(?, graph_id)
+                    graph_id = COALESCE(?, graph_id),
+                    thread_id = COALESCE(?, thread_id),
+                    orig_message_id = COALESCE(?, orig_message_id)
                 WHERE email_id = ?
             """, (timestamp, classification, confidence, notes, action, body,
-                  received_at, graph_id, email_id))
+                  received_at, graph_id, thread_id, orig_message_id, email_id))
         else:
             await db.execute("""
                 INSERT OR IGNORE INTO action_log
                     (timestamp, received_at, account, email_id, subject, sender, action,
-                     classification, confidence, notes, status, flagged, body, stub, graph_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?, 0, ?)
+                     classification, confidence, notes, status, flagged, body, stub,
+                     graph_id, thread_id, orig_message_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?, 0, ?, ?, ?)
             """, (timestamp, received_at, account, email_id, subject, sender, action,
-                  classification, confidence, notes, body, graph_id))
+                  classification, confidence, notes, body,
+                  graph_id, thread_id, orig_message_id))
         await db.commit()
 
 

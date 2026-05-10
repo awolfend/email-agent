@@ -116,6 +116,8 @@ async def poll_gmail():
             sender = addr.lower() if addr else raw_from
             body = email.get("fullBody") or email.get("snippet", "")
             received_at = parse_gmail_date(email.get("date", ""))
+            thread_id = email.get("threadId")
+            orig_message_id = email.get("messageId")
 
             existing = await get_email_by_id(email_id)
             if existing:
@@ -156,7 +158,9 @@ async def poll_gmail():
                 confidence=confidence,
                 notes=result.get("reason"),
                 body=body,
-                received_at=received_at
+                received_at=received_at,
+                thread_id=thread_id,
+                orig_message_id=orig_message_id,
             )
 
             if status != "pending":
