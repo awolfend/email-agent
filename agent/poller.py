@@ -6,7 +6,7 @@ from connectors.graph import get_emails as graph_get_emails
 from connectors.gmail import get_emails as gmail_get_emails
 from agent.classifier import classify_email
 from agent.actions import execute_action
-from db.database import log_action, get_email_by_id, update_email_status, ensure_inbox_state, mark_missing_as_archived, set_auth_error, clear_auth_error, prune_old_records, get_sender_rule, upsert_sender_rule
+from db.database import log_action, get_email_by_id, update_email_status, ensure_inbox_state, mark_missing_as_archived, set_auth_error, clear_auth_error, prune_old_records, get_sender_rule
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -48,15 +48,14 @@ async def poll_financial():
                 continue
 
             rule = await get_sender_rule(sender)
-            if rule and rule['source'] == 'manual':
+            if rule and rule['source'] == 'manual' and rule['count'] >= 2:
                 result = {
                     "classification": rule['classification'],
                     "confidence": 1.0,
-                    "reason": f"sender rule (manual)",
+                    "reason": "sender rule (manual, confirmed)",
                 }
             else:
                 result = await classify_email(subject, sender, body[:1000])
-                await upsert_sender_rule(sender, result.get("classification", ""))
             classification = result.get("classification")
             confidence = result.get("confidence", 0.0)
 
@@ -127,15 +126,14 @@ async def poll_gmail():
                 continue
 
             rule = await get_sender_rule(sender)
-            if rule and rule['source'] == 'manual':
+            if rule and rule['source'] == 'manual' and rule['count'] >= 2:
                 result = {
                     "classification": rule['classification'],
                     "confidence": 1.0,
-                    "reason": f"sender rule (manual)",
+                    "reason": "sender rule (manual, confirmed)",
                 }
             else:
                 result = await classify_email(subject, sender, body[:1000])
-                await upsert_sender_rule(sender, result.get("classification", ""))
             classification = result.get("classification")
             confidence = result.get("confidence", 0.0)
 
@@ -204,15 +202,14 @@ async def poll_personal():
                 continue
 
             rule = await get_sender_rule(sender)
-            if rule and rule['source'] == 'manual':
+            if rule and rule['source'] == 'manual' and rule['count'] >= 2:
                 result = {
                     "classification": rule['classification'],
                     "confidence": 1.0,
-                    "reason": f"sender rule (manual)",
+                    "reason": "sender rule (manual, confirmed)",
                 }
             else:
                 result = await classify_email(subject, sender, body[:1000])
-                await upsert_sender_rule(sender, result.get("classification", ""))
             classification = result.get("classification")
             confidence = result.get("confidence", 0.0)
 

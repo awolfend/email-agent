@@ -394,66 +394,44 @@ async def get_stats():
         return stats
 
 
-async def upsert_sender_rule(sender: str, classification: str, source: str = 'learned') -> None:
-    """Create or update a sender classification rule.
+async def upsert_sender_rule(sender: str, classification: str, source: str = 'manual') -> None:
+    """Create or update a manual sender classification rule.
 
-    Learned rules strengthen on consistency (fire at count >= 2) and decay on conflict.
-    Manual rules (source='manual') fire immediately and are not overwritten by learned data.
+    Only manual rules are stored. A rule fires automatically (overrides AI) once
+    the same classification has been manually confirmed twice (count >= 2).
+    Setting a different classification resets the count to 1.
     Classifications of 'error' or 'unknown' are never stored.
     """
-    if not sender or classification in ('error', 'unknown', ''):
+    if not sender or source != 'manual' or classification in ('error', 'unknown', ''):
         return
     from datetime import datetime, timezone
     now = datetime.now(timezone.utc).isoformat()
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
-            "SELECT classification, count, source FROM sender_rules WHERE sender = ?", (sender,)
+            "SELECT classification, count FROM sender_rules WHERE sender = ?", (sender,)
         ) as cur:
             row = await cur.fetchone()
         row = dict(row) if row else None
 
-        if source == 'manual':
-            if not row:
-                await db.execute(
-                    "INSERT INTO sender_rules (sender, classification, count, source, created_at, last_seen) "
-                    "VALUES (?, ?, 1, 'manual', ?, ?)",
-                    (sender, classification, now, now)
-                )
-            else:
-                await db.execute(
-                    "UPDATE sender_rules SET classification = ?, count = 1, source = 'manual', last_seen = ? "
-                    "WHERE sender = ?",
-                    (classification, now, sender)
-                )
+        if not row:
+            await db.execute(
+                "INSERT INTO sender_rules (sender, classification, count, source, created_at, last_seen) "
+                "VALUES (?, ?, 1, 'manual', ?, ?)",
+                (sender, classification, now, now)
+            )
+        elif row['classification'] == classification:
+            # Same classification confirmed again — strengthen
+            await db.execute(
+                "UPDATE sender_rules SET count = count + 1, last_seen = ? WHERE sender = ?",
+                (now, sender)
+            )
         else:
-            if not row:
-                await db.execute(
-                    "INSERT INTO sender_rules (sender, classification, count, source, created_at, last_seen) "
-                    "VALUES (?, ?, 1, 'learned', ?, ?)",
-                    (sender, classification, now, now)
-                )
-            elif row['source'] == 'manual':
-                # Manual rules are sticky — only update last_seen
-                await db.execute(
-                    "UPDATE sender_rules SET last_seen = ? WHERE sender = ?", (now, sender)
-                )
-            elif row['classification'] == classification:
-                # Consistent signal — strengthen the rule
-                await db.execute(
-                    "UPDATE sender_rules SET count = count + 1, last_seen = ? WHERE sender = ?",
-                    (now, sender)
-                )
-            else:
-                # Conflicting signal — decay the rule; delete if fully eroded
-                new_count = row['count'] - 1
-                if new_count <= 0:
-                    await db.execute("DELETE FROM sender_rules WHERE sender = ?", (sender,))
-                else:
-                    await db.execute(
-                        "UPDATE sender_rules SET count = ?, last_seen = ? WHERE sender = ?",
-                        (new_count, now, sender)
-                    )
+            # Classification changed — reset count to 1
+            await db.execute(
+                "UPDATE sender_rules SET classification = ?, count = 1, last_seen = ? WHERE sender = ?",
+                (classification, now, sender)
+            )
         await db.commit()
 
 
