@@ -181,10 +181,11 @@ async def api_send(email_id: str, body: SendRequest):
     if not recipients:
         return JSONResponse({"ok": False, "error": "No valid recipient address"}, status_code=400)
     to = ", ".join(recipients)
+    graph_id = email.get("graph_id") or email_id
     try:
         if email["account"] in ("financial", "personal"):
             await graph_send_email(email["account"], recipients, body.subject, body.body)
-            await graph_archive_email(email["account"], email_id)
+            await graph_archive_email(email["account"], graph_id)
         elif email["account"] == "gmail":
             await gmail_send_email(to, body.subject, body.body)
             await gmail_archive_email(email_id)
@@ -219,10 +220,11 @@ async def api_archive(email_id: str):
     email = await get_email_by_id(email_id)
     if not email:
         return JSONResponse({"ok": False, "error": "Email not found"}, status_code=404)
+    graph_id = email.get("graph_id") or email_id
     try:
         if email["account"] in ("financial", "personal"):
-            await graph_mark_as_read(email["account"], email_id)
-            await graph_archive_email(email["account"], email_id)
+            await graph_mark_as_read(email["account"], graph_id)
+            await graph_archive_email(email["account"], graph_id)
         elif email["account"] == "gmail":
             await gmail_mark_as_read(email_id)
             await gmail_archive_email(email_id)
@@ -236,9 +238,10 @@ async def api_unarchive(email_id: str):
     email = await get_email_by_id(email_id)
     if not email:
         return JSONResponse({"ok": False, "error": "Email not found"}, status_code=404)
+    graph_id = email.get("graph_id") or email_id
     try:
         if email["account"] in ("financial", "personal"):
-            await graph_unarchive_email(email["account"], email_id)
+            await graph_unarchive_email(email["account"], graph_id)
         elif email["account"] == "gmail":
             await gmail_unarchive_email(email_id)
         await update_email_status(email_id, "pending")
@@ -318,18 +321,19 @@ async def api_file(email_id: str, body: FileRequest):
 
     source = email["account"]
     target = body.target_account
+    graph_id = email.get("graph_id") or email_id
 
     try:
         if source == target:
             # Same-account: direct move
             if target in ("financial", "personal"):
-                await graph_file_to_folder(target, email_id, body.folder_id)
+                await graph_file_to_folder(target, graph_id, body.folder_id)
             else:
                 await gmail_file_to_label(email_id, body.folder_id)
         else:
             # Cross-account: export MIME from source, import into target, archive source
             if source in ("financial", "personal"):
-                mime_bytes = await graph_export_mime(source, email_id)
+                mime_bytes = await graph_export_mime(source, graph_id)
             else:
                 mime_bytes = await gmail_export_mime(email_id)
 
@@ -340,7 +344,7 @@ async def api_file(email_id: str, body: FileRequest):
 
             # Archive source after successful import
             if source in ("financial", "personal"):
-                await graph_archive_email(source, email_id)
+                await graph_archive_email(source, graph_id)
             else:
                 await gmail_archive_email(email_id)
 

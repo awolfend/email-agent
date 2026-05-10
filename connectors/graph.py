@@ -2,7 +2,7 @@ import os
 import httpx
 import json
 import re
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
 
 load_dotenv("config/.env")
@@ -41,12 +41,16 @@ def _mailbox_base(account: str) -> str:
     return f"{GRAPH_BASE}/me"
 
 
+_APP_BASE_URL = os.getenv("APP_BASE_URL", "http://localhost:8000").rstrip("/")
+
+
 def get_auth_url(account: str) -> str:
+    redirect_uri = f"{_APP_BASE_URL}/auth/callback/{account}"
     return (
         f"{AUTHORITY}/oauth2/v2.0/authorize"
         f"?client_id={CLIENT_ID}"
         f"&response_type=code"
-        f"&redirect_uri=http://localhost:8000/auth/callback/{account}"
+        f"&redirect_uri={redirect_uri}"
         f"&response_mode=query"
         f"&scope={SCOPES.replace(' ', '%20')}"
         f"&state={account}"
@@ -55,7 +59,7 @@ def get_auth_url(account: str) -> str:
 
 
 async def exchange_code_for_token(code: str, account: str) -> dict:
-    redirect_uri = f"http://localhost:8000/auth/callback/{account}"
+    redirect_uri = f"{_APP_BASE_URL}/auth/callback/{account}"
     async with httpx.AsyncClient() as client:
         response = await client.post(
             f"{AUTHORITY}/oauth2/v2.0/token",
@@ -68,10 +72,11 @@ async def exchange_code_for_token(code: str, account: str) -> dict:
                 "scope": SCOPES,
             },
         )
+        response.raise_for_status()
         token_data = response.json()
         token_data["account"] = account
         token_data["expires_at"] = (
-            datetime.utcnow() + timedelta(seconds=token_data.get("expires_in", 3600))
+            datetime.now(timezone.utc) + timedelta(seconds=token_data.get("expires_in", 3600))
         ).isoformat()
         tokens = load_tokens()
         tokens[account] = token_data
@@ -95,14 +100,23 @@ async def refresh_token(account: str) -> dict:
                 "scope": SCOPES,
             },
         )
+        response.raise_for_status()
         new_token = response.json()
         new_token["account"] = account
         new_token["expires_at"] = (
-            datetime.utcnow() + timedelta(seconds=new_token.get("expires_in", 3600))
+            datetime.now(timezone.utc) + timedelta(seconds=new_token.get("expires_in", 3600))
         ).isoformat()
         tokens[account] = new_token
         save_tokens(tokens)
         return new_token
+
+
+def _parse_expires_at(expires_str: str) -> datetime:
+    """Parse an ISO expires_at string, always returning a timezone-aware UTC datetime."""
+    dt = datetime.fromisoformat(expires_str)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
 
 
 async def get_app_token() -> str:
@@ -110,7 +124,7 @@ async def get_app_token() -> str:
     tokens = load_tokens()
     cached = tokens.get("personal_app", {})
     if cached.get("access_token") and cached.get("expires_at"):
-        if datetime.utcnow() < datetime.fromisoformat(cached["expires_at"]) - timedelta(minutes=5):
+        if datetime.now(timezone.utc) < _parse_expires_at(cached["expires_at"]) - timedelta(minutes=5):
             return cached["access_token"]
     async with httpx.AsyncClient() as client:
         response = await client.post(
@@ -125,7 +139,7 @@ async def get_app_token() -> str:
         response.raise_for_status()
         token_data = response.json()
         token_data["expires_at"] = (
-            datetime.utcnow() + timedelta(seconds=token_data.get("expires_in", 3600))
+            datetime.now(timezone.utc) + timedelta(seconds=token_data.get("expires_in", 3600))
         ).isoformat()
         tokens["personal_app"] = token_data
         save_tokens(tokens)
@@ -139,8 +153,8 @@ async def get_valid_token(account: str) -> str:
     token_data = tokens.get(account)
     if not token_data:
         raise Exception(f"No token for {account} — OAuth login required")
-    expires_at = datetime.fromisoformat(token_data["expires_at"])
-    if datetime.utcnow() >= expires_at - timedelta(minutes=5):
+    expires_at = _parse_expires_at(token_data["expires_at"])
+    if datetime.now(timezone.utc) >= expires_at - timedelta(minutes=5):
         token_data = await refresh_token(account)
     return token_data["access_token"]
 
