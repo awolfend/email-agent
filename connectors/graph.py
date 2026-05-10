@@ -268,6 +268,26 @@ async def delete_email(account: str, email_id: str):
         response.raise_for_status()
 
 
+async def get_message_graph_id(account: str, internet_message_id: str) -> str | None:
+    """Find the current folder-scoped Graph ID for a message using its stable
+    internetMessageId. Searches across all folders so works after archive/move."""
+    token = await get_valid_token(account)
+    safe_id = internet_message_id.replace("'", "''")
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        resp = await client.get(
+            f"{_mailbox_base(account)}/messages",
+            headers={"Authorization": f"Bearer {token}"},
+            params={
+                "$filter": f"internetMessageId eq '{safe_id}'",
+                "$select": "id,internetMessageId",
+                "$top": 1,
+            },
+        )
+        resp.raise_for_status()
+        items = resp.json().get("value", [])
+        return items[0]["id"] if items else None
+
+
 async def hard_delete_email(account: str, email_id: str):
     """Permanent delete — used only for autonomous spam deletion."""
     token = await get_valid_token(account)

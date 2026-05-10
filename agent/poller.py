@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from email.utils import parsedate_to_datetime
+from email.utils import parsedate_to_datetime, parseaddr
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from connectors.graph import get_emails as graph_get_emails
 from connectors.gmail import get_emails as gmail_get_emails
@@ -112,7 +112,9 @@ async def poll_gmail():
             email_id = email.get("id", "unknown")
             inbox_ids.add(email_id)
             subject = email.get("subject", "(no subject)")
-            sender = email.get("from", "unknown")
+            raw_from = email.get("from", "unknown")
+            _, addr = parseaddr(raw_from)
+            sender = addr.lower() if addr else raw_from
             body = email.get("fullBody") or email.get("snippet", "")
             received_at = parse_gmail_date(email.get("date", ""))
 

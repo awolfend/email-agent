@@ -3,7 +3,8 @@ import json
 import httpx
 import base64
 import re
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+from email.utils import parseaddr
 from dotenv import load_dotenv
 from email.mime.text import MIMEText
 
@@ -52,6 +53,13 @@ def get_auth_url() -> str:
     return AUTH_URL + params
 
 
+def _parse_expires_at(expires_str: str) -> datetime:
+    dt = datetime.fromisoformat(expires_str)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
 async def exchange_code_for_token(code: str) -> dict:
     async with httpx.AsyncClient() as client:
         response = await client.post(
@@ -64,9 +72,10 @@ async def exchange_code_for_token(code: str) -> dict:
                 "grant_type": "authorization_code",
             },
         )
+        response.raise_for_status()
         token_data = response.json()
         token_data["expires_at"] = (
-            datetime.utcnow() + timedelta(seconds=token_data.get("expires_in", 3600))
+            datetime.now(timezone.utc) + timedelta(seconds=token_data.get("expires_in", 3600))
         ).isoformat()
         tokens = load_tokens()
         tokens["gmail"] = token_data
@@ -89,9 +98,10 @@ async def refresh_token() -> dict:
                 "grant_type": "refresh_token",
             },
         )
+        response.raise_for_status()
         new_token = response.json()
         new_token["expires_at"] = (
-            datetime.utcnow() + timedelta(seconds=new_token.get("expires_in", 3600))
+            datetime.now(timezone.utc) + timedelta(seconds=new_token.get("expires_in", 3600))
         ).isoformat()
         new_token["refresh_token"] = token_data["refresh_token"]
         tokens["gmail"] = new_token
@@ -104,8 +114,8 @@ async def get_valid_token() -> str:
     token_data = tokens.get("gmail")
     if not token_data:
         raise Exception("No Gmail token — OAuth login required")
-    expires_at = datetime.fromisoformat(token_data["expires_at"])
-    if datetime.utcnow() >= expires_at - timedelta(minutes=5):
+    expires_at = _parse_expires_at(token_data["expires_at"])
+    if datetime.now(timezone.utc) >= expires_at - timedelta(minutes=5):
         token_data = await refresh_token()
     return token_data["access_token"]
 

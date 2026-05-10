@@ -16,6 +16,7 @@ from connectors.graph import (
     delete_email as graph_delete_email,
     archive_email as graph_archive_email,
     unarchive_email as graph_unarchive_email,
+    get_message_graph_id as graph_get_message_id,
     send_email as graph_send_email,
     mark_as_read as graph_mark_as_read,
     accept_calendar_event as graph_accept_calendar,
@@ -238,10 +239,14 @@ async def api_unarchive(email_id: str):
     email = await get_email_by_id(email_id)
     if not email:
         return JSONResponse({"ok": False, "error": "Email not found"}, status_code=404)
-    graph_id = email.get("graph_id") or email_id
     try:
         if email["account"] in ("financial", "personal"):
-            await graph_unarchive_email(email["account"], graph_id)
+            # Stored graph_id is the inbox-era ID and is stale after archive.
+            # Look up the current folder-scoped ID via the stable internetMessageId.
+            live_id = await graph_get_message_id(email["account"], email_id)
+            if not live_id:
+                raise Exception("Message not found in mailbox — may have been permanently deleted")
+            await graph_unarchive_email(email["account"], live_id)
         elif email["account"] == "gmail":
             await gmail_unarchive_email(email_id)
         await update_email_status(email_id, "pending")
