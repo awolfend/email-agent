@@ -201,6 +201,17 @@ async def get_email_by_id(email_id: str) -> dict:
             return dict(row) if row else None
 
 
+async def ensure_inbox_state(email_id: str, graph_id: str):
+    """Inbox is source of truth. If an email is present in the live inbox,
+    force its DB record to pending and refresh its graph_id."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "UPDATE action_log SET status = 'pending', graph_id = COALESCE(?, graph_id) WHERE email_id = ?",
+            (graph_id, email_id)
+        )
+        await db.commit()
+
+
 async def update_email_status(email_id: str, status: str, action: str = None):
     async with aiosqlite.connect(DB_PATH) as db:
         if action:
