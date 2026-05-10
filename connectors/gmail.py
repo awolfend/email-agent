@@ -209,6 +209,8 @@ async def get_emails(count: int = None) -> list:
             full_body = extract_body_from_payload(data.get("payload", {}))
             emails.append({
                 "id": msg["id"],
+                "threadId": data.get("threadId"),
+                "messageId": headers.get("Message-ID", ""),
                 "subject": headers.get("Subject", "(no subject)"),
                 "from": headers.get("From", "unknown"),
                 "date": headers.get("Date", ""),
@@ -335,19 +337,38 @@ async def mark_as_read(email_id: str):
         response.raise_for_status()
 
 
-async def send_email(to: str, subject: str, body: str):
+async def send_email(to: str, subject: str, body: str,
+                     thread_id: str = None, in_reply_to: str = None) -> str:
+    """Send an email and return the Gmail message ID of the sent message."""
     token = await get_valid_token()
-    mime = MIMEText(body, "plain")
-    mime["to"] = to
-    mime["subject"] = subject
+    profile = await get_user_profile()
+    from_addr = profile.get("email", "")
+
+    mime = MIMEText(body, "plain", "utf-8")
+    mime["From"] = from_addr
+    mime["To"] = to
+    mime["Subject"] = subject
+    if in_reply_to:
+        mime["In-Reply-To"] = in_reply_to
+        mime["References"] = in_reply_to
+
     raw = base64.urlsafe_b64encode(mime.as_bytes()).decode("utf-8")
+    payload: dict = {"raw": raw}
+    if thread_id:
+        payload["threadId"] = thread_id
+
     async with httpx.AsyncClient() as client:
         response = await client.post(
             f"{GMAIL_BASE}/messages/send",
             headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
-            json={"raw": raw},
+            json=payload,
         )
-        response.raise_for_status()
+        if not response.is_success:
+            raise Exception(f"Gmail send failed {response.status_code}: {response.text}")
+        msg_id = response.json().get("id", "")
+        import logging
+        logging.getLogger(__name__).info(f"[gmail] sent message id={msg_id} thread={thread_id}")
+        return msg_id
 
 
 async def get_or_create_label(label_name: str) -> str:

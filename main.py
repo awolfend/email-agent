@@ -188,7 +188,11 @@ async def api_send(email_id: str, body: SendRequest):
             await graph_send_email(email["account"], recipients, body.subject, body.body)
             await graph_archive_email(email["account"], graph_id)
         elif email["account"] == "gmail":
-            await gmail_send_email(to, body.subject, body.body)
+            await gmail_send_email(
+                to, body.subject, body.body,
+                thread_id=email.get("thread_id"),
+                in_reply_to=email.get("orig_message_id"),
+            )
             await gmail_archive_email(email_id)
         else:
             return JSONResponse({"ok": False, "error": f"Unknown account: {email['account']}"}, status_code=400)
