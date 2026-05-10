@@ -221,7 +221,7 @@ async def get_emails(count: int = None) -> list:
 
 async def get_sent_emails(days: int = 90) -> list:
     token = await get_valid_token()
-    since_date = (datetime.utcnow() - timedelta(days=days)).strftime("%Y/%m/%d")
+    since_date = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y/%m/%d")
     all_message_ids = []
 
     async with httpx.AsyncClient(timeout=60.0) as client:
@@ -273,6 +273,7 @@ async def get_user_profile() -> dict:
             "https://www.googleapis.com/oauth2/v2/userinfo",
             headers={"Authorization": f"Bearer {token}"},
         )
+        response.raise_for_status()
         return response.json()
 
 
