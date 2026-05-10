@@ -48,11 +48,11 @@ async def poll_financial():
                 continue
 
             rule = await get_sender_rule(sender)
-            if rule and (rule['source'] == 'manual' or rule['count'] >= 2):
+            if rule and rule['source'] == 'manual':
                 result = {
                     "classification": rule['classification'],
                     "confidence": 1.0,
-                    "reason": f"sender rule ({rule['source']}, {rule['count']}x)",
+                    "reason": f"sender rule (manual)",
                 }
             else:
                 result = await classify_email(subject, sender, body[:1000])
@@ -127,11 +127,11 @@ async def poll_gmail():
                 continue
 
             rule = await get_sender_rule(sender)
-            if rule and (rule['source'] == 'manual' or rule['count'] >= 2):
+            if rule and rule['source'] == 'manual':
                 result = {
                     "classification": rule['classification'],
                     "confidence": 1.0,
-                    "reason": f"sender rule ({rule['source']}, {rule['count']}x)",
+                    "reason": f"sender rule (manual)",
                 }
             else:
                 result = await classify_email(subject, sender, body[:1000])
@@ -204,11 +204,11 @@ async def poll_personal():
                 continue
 
             rule = await get_sender_rule(sender)
-            if rule and (rule['source'] == 'manual' or rule['count'] >= 2):
+            if rule and rule['source'] == 'manual':
                 result = {
                     "classification": rule['classification'],
                     "confidence": 1.0,
-                    "reason": f"sender rule ({rule['source']}, {rule['count']}x)",
+                    "reason": f"sender rule (manual)",
                 }
             else:
                 result = await classify_email(subject, sender, body[:1000])

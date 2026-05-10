@@ -411,7 +411,8 @@ async def api_clear_sender_rules():
 
 @app.delete("/api/sender-rules/{sender:path}")
 async def api_delete_sender_rule(sender: str):
-    deleted = await delete_sender_rule(sender)
+    from urllib.parse import unquote
+    deleted = await delete_sender_rule(unquote(sender))
     return {"ok": deleted}
 
 

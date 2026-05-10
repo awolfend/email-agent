@@ -1987,9 +1987,12 @@
 
     async function deleteSenderRule(sender) {
         const res = await fetch(`/api/sender-rules/${encodeURIComponent(sender)}`, { method: 'DELETE' });
-        if (res.ok) {
+        const data = await res.json();
+        if (res.ok && data.ok) {
             showToast(`Rule deleted — ${sender} will be re-classified by AI`);
             loadSenderRules();
+        } else {
+            showToast('Failed to delete rule');
         }
     }
 
