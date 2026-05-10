@@ -263,7 +263,8 @@ async def api_calendar_accept(email_id: str):
     warning = None
     try:
         if email["account"] in ("financial", "personal"):
-            await graph_accept_calendar(email["account"], email_id)
+            graph_id = email.get("graph_id") or email_id
+            await graph_accept_calendar(email["account"], graph_id)
         elif email["account"] == "gmail":
             await gmail_accept_calendar(email_id)
     except Exception as e:
@@ -280,7 +281,8 @@ async def api_calendar_decline(email_id: str):
     warning = None
     try:
         if email["account"] in ("financial", "personal"):
-            await graph_decline_calendar(email["account"], email_id)
+            graph_id = email.get("graph_id") or email_id
+            await graph_decline_calendar(email["account"], graph_id)
         elif email["account"] == "gmail":
             await gmail_decline_calendar(email_id)
     except Exception as e:
@@ -377,7 +379,8 @@ async def api_delete(email_id: str):
     if email:
         try:
             if email["account"] in ("financial", "personal"):
-                await graph_delete_email(email["account"], email_id)
+                graph_id = email.get("graph_id") or email_id
+                await graph_delete_email(email["account"], graph_id)
             elif email["account"] == "gmail":
                 await gmail_delete_email(email_id)
         except Exception:

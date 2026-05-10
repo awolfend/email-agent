@@ -210,7 +210,7 @@ async def get_emails(account: str, count: int = None) -> list:
 async def get_sent_emails(account: str, days: int = 90) -> list:
     token = await get_valid_token(account)
     base = _mailbox_base(account)
-    since = (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    since = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
     all_emails = []
 
     async with httpx.AsyncClient(timeout=60.0) as client:
@@ -253,6 +253,7 @@ async def get_user_profile(account: str) -> dict:
             _mailbox_base(account),
             headers={"Authorization": f"Bearer {token}"},
         )
+        response.raise_for_status()
         return response.json()
 
 
@@ -364,6 +365,7 @@ async def get_or_create_folder(account: str, folder_name: str) -> str:
             headers={"Authorization": f"Bearer {token}"},
             params={"$top": 50},
         )
+        response.raise_for_status()
         folders = response.json().get("value", [])
         for folder in folders:
             if folder["displayName"].lower() == folder_name.lower():
