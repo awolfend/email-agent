@@ -3,6 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Email Agent">
+    <meta name="theme-color" content="#0f1117">
+    <link rel="manifest" href="/static/manifest.json">
     <title>Email Agent</title>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -767,6 +772,160 @@
             line-height: 1.6;
         }
         .settings-textarea:focus { outline: none; border-color: var(--accent); }
+
+        /* ---- Mobile-only elements (hidden on desktop) ---- */
+        #hamburger { display: none; }
+        #mobile-back-btn { display: none; }
+        #settings-mobile-back { display: none; }
+        #settings-scroll { display: contents; }
+        #sidebar-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.5);
+            z-index: 299;
+        }
+        #sidebar-overlay.show { display: block; }
+
+        @media (max-width: 768px) {
+            body { position: fixed; width: 100%; height: 100%; }
+
+            #sidebar {
+                position: fixed;
+                top: 0;
+                left: -100%;
+                height: 100%;
+                width: 80%;
+                max-width: 300px;
+                z-index: 300;
+                transition: left 0.25s ease;
+                overflow-y: auto;
+            }
+            #sidebar.open { left: 0; }
+
+            .resizer, .resizer-h { display: none !important; }
+
+            #queue-panel {
+                position: fixed !important;
+                inset: 0 !important;
+                width: 100% !important;
+                max-width: none !important;
+                transform: translateX(0);
+                transition: transform 0.25s ease;
+                display: flex !important;
+            }
+            #queue-panel.panel-hidden { transform: translateX(-100%); }
+
+            #detail-panel {
+                position: fixed !important;
+                inset: 0 !important;
+                width: 100% !important;
+                min-width: 0 !important;
+                transform: translateX(100%);
+                transition: transform 0.25s ease;
+                display: flex !important;
+            }
+            #detail-panel.panel-visible { transform: translateX(0); }
+
+            #settings-panel {
+                position: fixed !important;
+                inset: 0 !important;
+                width: 100% !important;
+                padding: 0 !important;
+                gap: 0 !important;
+                transform: translateX(100%);
+                transition: transform 0.25s ease;
+                display: flex !important;
+                overflow-y: hidden !important;
+            }
+            #settings-panel.panel-visible { transform: translateX(0); }
+
+            #settings-scroll {
+                display: flex !important;
+                flex-direction: column;
+                gap: 20px;
+                padding: 16px;
+                overflow-y: auto;
+                flex: 1;
+                min-height: 0;
+            }
+
+            #hamburger {
+                display: flex !important;
+                align-items: center;
+                justify-content: center;
+                min-width: 44px;
+                min-height: 44px;
+                background: none;
+                border: none;
+                color: var(--text-dim);
+                cursor: pointer;
+                font-size: 20px;
+                flex-shrink: 0;
+                padding: 0;
+                touch-action: manipulation;
+            }
+            #hamburger:active { color: var(--text); }
+
+            #mobile-back-btn {
+                display: flex !important;
+                align-items: center;
+                gap: 6px;
+                padding: 0 16px;
+                background: var(--surface);
+                border: none;
+                border-bottom: 1px solid var(--border);
+                color: var(--accent);
+                cursor: pointer;
+                font-size: 14px;
+                font-weight: 500;
+                min-height: 48px;
+                flex-shrink: 0;
+                width: 100%;
+                text-align: left;
+                touch-action: manipulation;
+            }
+            #mobile-back-btn:active { background: var(--surface2); }
+
+            #settings-mobile-back {
+                display: flex !important;
+                align-items: center;
+                gap: 6px;
+                padding: 0 16px;
+                background: var(--surface);
+                border: none;
+                border-bottom: 1px solid var(--border);
+                color: var(--accent);
+                cursor: pointer;
+                font-size: 14px;
+                font-weight: 500;
+                min-height: 48px;
+                flex-shrink: 0;
+                width: 100%;
+                text-align: left;
+                touch-action: manipulation;
+            }
+            #settings-mobile-back:active { background: var(--surface2); }
+
+            #queue-count { display: none; }
+
+            .email-item { padding: 14px; touch-action: manipulation; }
+            .action-btn { min-height: 44px; padding: 10px 14px; touch-action: manipulation; }
+            .stat-row { min-height: 44px; touch-action: manipulation; }
+            .history-tab { padding: 8px 14px; min-height: 40px; touch-action: manipulation; }
+            .mode-btn { min-height: 40px; touch-action: manipulation; }
+            .poll-btn, .clear-btn { min-height: 44px; padding: 10px; touch-action: manipulation; }
+
+            #detail-header { padding: 12px 16px; }
+            #detail-meta { padding: 8px 16px; }
+            #action-bar { padding: 8px 16px; gap: 6px; }
+            #email-body-section { padding: 12px 16px; }
+            #draft-section { padding: 10px 16px; }
+
+            .settings-card { padding: 16px; }
+            .voice-accounts { flex-direction: column; }
+            .rules-table th, .rules-table td { padding: 6px 4px; font-size: 11px; }
+        }
     </style>
 </head>
 <body>
@@ -867,10 +1026,13 @@
     <div class="clear-btn" id="clear-btn" style="display:none;" onclick="confirmClearHistory()">🗑 Clear History</div>
 </div>
 
+<div id="sidebar-overlay" onclick="closeSidebar()"></div>
+
 <div class="resizer" id="resizer-1"></div>
 
 <div id="queue-panel">
     <div id="queue-header">
+        <button type="button" id="hamburger" onclick="openSidebar()" title="Open menu">☰</button>
         <h2 id="queue-title">Inbox</h2>
         <span style="color:var(--text-dimmer);font-size:11px;white-space:nowrap;" id="queue-count">0 items</span>
         <div class="sort-toggle">
@@ -891,6 +1053,7 @@
 <div class="resizer" id="resizer-2"></div>
 
 <div id="detail-panel">
+    <button type="button" id="mobile-back-btn" onclick="mobileBack()">‹ Back</button>
     <div id="empty-state">
         <div class="icon">📬</div>
         <p id="empty-msg">Select an email to review</p>
@@ -962,6 +1125,8 @@
 </div>
 
 <div id="settings-panel">
+    <button type="button" id="settings-mobile-back" onclick="setMode('inbox')">‹ Back</button>
+    <div id="settings-scroll">
     <div class="settings-page-title">Settings</div>
 
     <div class="settings-section">
@@ -1113,6 +1278,7 @@
             </div>
         </div>
     </div>
+    </div>
 </div>
 
 <!-- Clear history overlay -->
@@ -1212,11 +1378,13 @@
             loadSettings();
             loadSenderRules();
         }
+        if (isMobile()) { closeSidebar(); applyMobilePanelState(isSettings ? 'settings' : 'queue'); }
     }
 
     // ---- Filters ----
 
     function filterAccount(account) {
+        if (isMobile()) closeSidebar();
         currentAccountFilter = account;
         document.querySelectorAll('[id^="acct-"]').forEach(r => r.classList.remove('active'));
         document.getElementById(`acct-${account}`).classList.add('active');
@@ -1230,6 +1398,7 @@
     }
 
     function filterClass(classification) {
+        if (isMobile()) closeSidebar();
         currentClassFilter = classification;
         document.querySelectorAll('.stat-row[id^="filter-"]').forEach(r => r.classList.remove('active'));
         const el = document.getElementById(`filter-${classification}`);
@@ -1238,6 +1407,7 @@
     }
 
     function filterHistoryClass(classification) {
+        if (isMobile()) closeSidebar();
         currentHistoryClassFilter = classification;
         document.querySelectorAll('.stat-row[id^="hfilter-"]').forEach(r => r.classList.remove('active'));
         const el = document.getElementById(`hfilter-${classification}`);
@@ -1471,6 +1641,7 @@
             currentEmail = null;
             document.getElementById('empty-state').style.display = 'flex';
             document.getElementById('email-detail').style.display = 'none';
+            if (isMobile()) applyMobilePanelState('queue');
         }
     }
 
@@ -1529,6 +1700,7 @@
 
         renderActionBar(email);
         renderQueue();
+        if (isMobile()) applyMobilePanelState('detail');
     }
 
     function extractEmailFromSender(raw) {
@@ -2287,6 +2459,34 @@
             draftSection.style.height = Math.max(100, startDH - d) + 'px';
         }
         function onUp() { resizer.classList.remove('dragging'); document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); }
+    }
+
+    // ---- Mobile ----
+
+    function isMobile() { return window.innerWidth <= 768; }
+
+    function applyMobilePanelState(panel) {
+        if (!isMobile()) return;
+        const queueEl = document.getElementById('queue-panel');
+        const detailEl = document.getElementById('detail-panel');
+        const settingsEl = document.getElementById('settings-panel');
+        queueEl.classList.toggle('panel-hidden', panel !== 'queue');
+        detailEl.classList.toggle('panel-visible', panel === 'detail');
+        settingsEl.classList.toggle('panel-visible', panel === 'settings');
+    }
+
+    function openSidebar() {
+        document.getElementById('sidebar').classList.add('open');
+        document.getElementById('sidebar-overlay').classList.add('show');
+    }
+
+    function closeSidebar() {
+        document.getElementById('sidebar').classList.remove('open');
+        document.getElementById('sidebar-overlay').classList.remove('show');
+    }
+
+    function mobileBack() {
+        applyMobilePanelState('queue');
     }
 
     makeResizer('resizer-1', 'sidebar');
