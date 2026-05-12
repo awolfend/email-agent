@@ -1979,7 +1979,7 @@
                     <td><span class="source-badge source-${r.source}">${r.source}</span></td>
                     <td style="text-align:center;color:var(--text-dim);">${countLabel}</td>
                     <td style="color:var(--text-dim);white-space:nowrap;">${lastSeen}</td>
-                    <td><button class="rule-delete-btn" onclick="deleteSenderRule(${JSON.stringify(r.sender)})">Delete</button></td>
+                    <td><button class="rule-delete-btn" data-sender="${escHtml(r.sender)}" onclick="deleteSenderRule(this.dataset.sender)">Delete</button></td>
                 </tr>`;
             }).join('');
         } catch (e) {
