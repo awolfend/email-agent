@@ -18,6 +18,7 @@ from connectors.graph import (
     unarchive_email as graph_unarchive_email,
     get_message_graph_id as graph_get_message_id,
     send_email as graph_send_email,
+    reply_to_email as graph_reply_to_email,
     mark_as_read as graph_mark_as_read,
     accept_calendar_event as graph_accept_calendar,
     decline_calendar_event as graph_decline_calendar,
@@ -185,7 +186,8 @@ async def api_send(email_id: str, body: SendRequest):
     graph_id = email.get("graph_id") or email_id
     try:
         if email["account"] in ("financial", "personal"):
-            await graph_send_email(email["account"], recipients, body.subject, body.body)
+            cc = ["***FILING_EMAIL_FINANCIAL***"] if email["account"] == "financial" else None
+            await graph_reply_to_email(email["account"], graph_id, recipients, body.body, cc=cc)
             await graph_archive_email(email["account"], graph_id)
         elif email["account"] == "gmail":
             await gmail_send_email(

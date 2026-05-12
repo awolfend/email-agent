@@ -356,6 +356,28 @@ async def send_email(account: str, to: str | list, subject: str, body: str):
         response.raise_for_status()
 
 
+async def reply_to_email(account: str, original_graph_id: str, to: list[str], body: str, cc: list[str] = None):
+    """Reply to a message using Graph's /reply action.
+
+    Unlike sendMail, this inherits the conversation context so the reply
+    appears in the correct thread in Outlook and Sent Items.
+    """
+    token = await get_valid_token(account)
+    message = {
+        "toRecipients": [{"emailAddress": {"address": a}} for a in to],
+        "body": {"contentType": "Text", "content": body},
+    }
+    if cc:
+        message["ccRecipients"] = [{"emailAddress": {"address": a}} for a in cc]
+    async with httpx.AsyncClient() as client:
+        response = await client.post(
+            f"{_mailbox_base(account)}/messages/{original_graph_id}/reply",
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+            json={"message": message},
+        )
+        response.raise_for_status()
+
+
 async def get_or_create_folder(account: str, folder_name: str) -> str:
     token = await get_valid_token(account)
     base = _mailbox_base(account)
