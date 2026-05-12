@@ -147,6 +147,18 @@ templates.TemplateResponse("template.html", {"request": request})
 **Note on Claude API:** Model string is `claude-sonnet-4-6`. Separate Anthropic API account from Claude Pro. ANTHROPIC_API_KEY set in `.env`.
 **Note on OpenAI API:** Model string is `gpt-4o`. Used as fallback only — same prompt as Claude. OPENAI_API_KEY set in `.env`.
 
+**Considered and deferred — Anthropic Python SDK (`anthropic` package):**
+Currently `drafter.py` and `learner.py` call the Anthropic API directly via `httpx`. Switching to the official SDK (`pip install anthropic`) was evaluated and deferred. Summary:
+
+| | Detail |
+|---|---|
+| **Pro: Prompt caching** | SDK supports `cache_control: ephemeral` on system prompts. The per-account writing instruction (~500 tokens) could be cached across multiple draft calls, reducing input token cost. Benefit only realised if multiple drafts are generated within the 5-minute cache TTL — uncommon for a sole operator. |
+| **Pro: Typed errors** | SDK raises `anthropic.APIStatusError`, `anthropic.APIConnectionError` etc. instead of `httpx.HTTPStatusError`. Marginally better log messages. |
+| **Pro: Built-in retries** | SDK retries on transient errors by default. The current flow is not latency-sensitive enough for this to matter. |
+| **Con: New dependency** | Adds `anthropic` + 5 transitive packages (`distro`, `docstring-parser`, `jiter`, `sniffio`, `anyio`). The current `httpx` approach has zero extra deps (httpx is already required for Graph/Gmail). |
+| **Con: Working code replaced** | The raw httpx calls have no known bugs. Changing them introduced risk with no user-facing benefit. |
+| **Verdict** | Not worth it at current usage volume. Revisit if: (a) multiple users, (b) batch draft generation is added, or (c) cost becomes a concern. If adopted, split `generate_draft()` into `system_prompt = base_prompt + voice_block` (cached) and `user_content = email details` (per-call). |
+
 ### Anthony's voice — draft prompt calibration
 Per-account base prompts and footers are stored in the SQLite `settings` table and editable via ⚙ Settings → Account Configuration in the dashboard. Hardcoded defaults in `agent/drafter.py` are used only on first run before the user saves via the UI.
 
