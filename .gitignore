@@ -5,6 +5,7 @@ config/tokens_gmail.json
 
 # Database — contains email content
 config/agent.db
+db/email_agent.db
 
 # Logs and runtime files
 logs/

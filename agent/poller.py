@@ -11,8 +11,13 @@ from db.database import log_action, get_email_by_id, update_email_status, ensure
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+_AUTH_KEYWORDS = (
+    "401", "No token", "OAuth", "invalid_grant", "invalid_client",
+    "AADSTS", "Unauthorized", "unauthorized", "offset-naive", "offset-aware",
+)
 
-def parse_gmail_date(date_str: str) -> str:
+
+def _parse_gmail_date(date_str: str) -> str:
     try:
         dt = parsedate_to_datetime(date_str)
         return dt.isoformat()
@@ -20,239 +25,147 @@ def parse_gmail_date(date_str: str) -> str:
         return None
 
 
+def _normalize_graph_email(email: dict) -> dict:
+    graph_id = email.get("id", "unknown")
+    stable_id = email.get("internetMessageId") or graph_id
+    sender = email.get("from", {}).get("emailAddress", {}).get("address", "unknown")
+    body = email.get("fullBody") or email.get("bodyPreview", "")
+    return {
+        "stable_id": stable_id,
+        "op_id": graph_id,
+        "graph_id": graph_id,
+        "subject": email.get("subject", "(no subject)"),
+        "sender": sender,
+        "body": body,
+        "received_at": email.get("receivedDateTime"),
+        "thread_id": None,
+        "orig_message_id": None,
+    }
+
+
+def _normalize_gmail_email(email: dict) -> dict:
+    email_id = email.get("id", "unknown")
+    raw_from = email.get("from", "unknown")
+    _, addr = parseaddr(raw_from)
+    sender = addr.lower() if addr else raw_from
+    body = email.get("fullBody") or email.get("snippet", "")
+    return {
+        "stable_id": email_id,
+        "op_id": email_id,
+        "graph_id": None,
+        "subject": email.get("subject", "(no subject)"),
+        "sender": sender,
+        "body": body,
+        "received_at": _parse_gmail_date(email.get("date", "")),
+        "thread_id": email.get("threadId"),
+        "orig_message_id": email.get("messageId"),
+    }
+
+
+async def _process_emails(account: str, emails: list, normalize_fn) -> set:
+    inbox_ids = set()
+    for raw_email in emails:
+        n = normalize_fn(raw_email)
+        inbox_ids.add(n["stable_id"])
+
+        existing = await get_email_by_id(n["stable_id"])
+        if existing:
+            prev = existing.get("status")
+            if prev not in (None, "pending"):
+                logger.info(f"[{account}] Back in inbox (was {prev}): {n['subject'][:50]}")
+            await ensure_inbox_state(n["stable_id"], n["op_id"])
+            continue
+
+        rule = await get_sender_rule(n["sender"])
+        if rule and rule["source"] == "manual" and rule["count"] >= 2:
+            result = {
+                "classification": rule["classification"],
+                "confidence": 1.0,
+                "reason": "sender rule (manual, confirmed)",
+            }
+        else:
+            result = await classify_email(n["subject"], n["sender"], n["body"][:1000])
+
+        classification = result.get("classification")
+        confidence = result.get("confidence", 0.0)
+
+        action_label, status = await execute_action(
+            account=account,
+            email_id=n["op_id"],
+            subject=n["subject"],
+            sender=n["sender"],
+            classification=classification,
+            confidence=confidence,
+        )
+
+        await log_action(
+            account=account,
+            email_id=n["stable_id"],
+            subject=n["subject"],
+            sender=n["sender"],
+            action=action_label,
+            classification=classification,
+            confidence=confidence,
+            notes=result.get("reason"),
+            body=n["body"],
+            received_at=n["received_at"],
+            graph_id=n["graph_id"],
+            thread_id=n["thread_id"],
+            orig_message_id=n["orig_message_id"],
+        )
+
+        if status != "pending":
+            await update_email_status(n["stable_id"], status)
+
+        logger.info(f"[{account}] {n['subject'][:50]} → {classification} ({confidence:.2f}) → {action_label}")
+
+    return inbox_ids
+
+
 async def poll_financial():
     logger.info("Polling financial inbox (full)...")
-    inbox_ids = set()
     try:
         emails = await graph_get_emails("financial")
         logger.info(f"[financial] Found {len(emails)} emails in inbox")
-
-        for email in emails:
-            graph_id = email.get("id", "unknown")
-            stable_id = email.get("internetMessageId") or graph_id
-            inbox_ids.add(stable_id)
-            subject = email.get("subject", "(no subject)")
-            sender = email.get("from", {}).get("emailAddress", {}).get("address", "unknown")
-            body = email.get("fullBody") or email.get("bodyPreview", "")
-            received_at = email.get("receivedDateTime")
-
-            # Inbox is source of truth: if the email is here it must be pending.
-            # For known emails, refresh graph_id and restore status if needed.
-            # Only classify emails we have never seen before.
-            existing = await get_email_by_id(stable_id)
-            if existing:
-                prev = existing.get("status")
-                if prev not in (None, "pending"):
-                    logger.info(f"[financial] Back in inbox (was {prev}): {subject[:50]}")
-                await ensure_inbox_state(stable_id, graph_id)
-                continue
-
-            rule = await get_sender_rule(sender)
-            if rule and rule['source'] == 'manual' and rule['count'] >= 2:
-                result = {
-                    "classification": rule['classification'],
-                    "confidence": 1.0,
-                    "reason": "sender rule (manual, confirmed)",
-                }
-            else:
-                result = await classify_email(subject, sender, body[:1000])
-            classification = result.get("classification")
-            confidence = result.get("confidence", 0.0)
-
-            action_label, status = await execute_action(
-                account="financial",
-                email_id=graph_id,  # Graph folder-scoped ID for API operations
-                subject=subject,
-                sender=sender,
-                classification=classification,
-                confidence=confidence
-            )
-
-            await log_action(
-                account="financial",
-                email_id=stable_id,  # stable RFC 2822 ID for DB lookups
-                subject=subject,
-                sender=sender,
-                action=action_label,
-                classification=classification,
-                confidence=confidence,
-                notes=result.get("reason"),
-                body=body,
-                received_at=received_at,
-                graph_id=graph_id
-            )
-
-            if status != "pending":
-                await update_email_status(stable_id, status)
-
-            logger.info(f"[financial] {subject[:50]} → {classification} ({confidence:.2f}) → {action_label}")
-
-        # Reconcile — anything pending in SQLite but not in inbox gets archived
+        inbox_ids = await _process_emails("financial", emails, _normalize_graph_email)
         missing = await mark_missing_as_archived("financial", inbox_ids)
         if missing:
             logger.info(f"[financial] Reconciled {len(missing)} emails no longer in inbox")
         await clear_auth_error("financial")
-
     except Exception as e:
         logger.error(f"Error polling financial inbox: {e}")
-        _AUTH_KEYWORDS = ("401", "No token", "OAuth", "invalid_grant", "invalid_client", "AADSTS", "Unauthorized", "unauthorized", "offset-naive", "offset-aware")
         if any(k in str(e) for k in _AUTH_KEYWORDS):
             await set_auth_error("financial", str(e))
 
 
 async def poll_gmail():
     logger.info("Polling Gmail inbox (full)...")
-    inbox_ids = set()
     try:
         emails = await gmail_get_emails()
         logger.info(f"[gmail] Found {len(emails)} emails in inbox")
-
-        for email in emails:
-            email_id = email.get("id", "unknown")
-            inbox_ids.add(email_id)
-            subject = email.get("subject", "(no subject)")
-            raw_from = email.get("from", "unknown")
-            _, addr = parseaddr(raw_from)
-            sender = addr.lower() if addr else raw_from
-            body = email.get("fullBody") or email.get("snippet", "")
-            received_at = parse_gmail_date(email.get("date", ""))
-            thread_id = email.get("threadId")
-            orig_message_id = email.get("messageId")
-
-            existing = await get_email_by_id(email_id)
-            if existing:
-                prev = existing.get("status")
-                if prev not in (None, "pending"):
-                    logger.info(f"[gmail] Back in inbox (was {prev}): {subject[:50]}")
-                await ensure_inbox_state(email_id, email_id)
-                continue
-
-            rule = await get_sender_rule(sender)
-            if rule and rule['source'] == 'manual' and rule['count'] >= 2:
-                result = {
-                    "classification": rule['classification'],
-                    "confidence": 1.0,
-                    "reason": "sender rule (manual, confirmed)",
-                }
-            else:
-                result = await classify_email(subject, sender, body[:1000])
-            classification = result.get("classification")
-            confidence = result.get("confidence", 0.0)
-
-            action_label, status = await execute_action(
-                account="gmail",
-                email_id=email_id,
-                subject=subject,
-                sender=sender,
-                classification=classification,
-                confidence=confidence
-            )
-
-            await log_action(
-                account="gmail",
-                email_id=email_id,
-                subject=subject,
-                sender=sender,
-                action=action_label,
-                classification=classification,
-                confidence=confidence,
-                notes=result.get("reason"),
-                body=body,
-                received_at=received_at,
-                thread_id=thread_id,
-                orig_message_id=orig_message_id,
-            )
-
-            if status != "pending":
-                await update_email_status(email_id, status)
-
-            logger.info(f"[gmail] {subject[:50]} → {classification} ({confidence:.2f}) → {action_label}")
-
-        # Reconcile — anything pending in SQLite but not in inbox gets archived
+        inbox_ids = await _process_emails("gmail", emails, _normalize_gmail_email)
         missing = await mark_missing_as_archived("gmail", inbox_ids)
         if missing:
             logger.info(f"[gmail] Reconciled {len(missing)} emails no longer in inbox")
         await clear_auth_error("gmail")
-
     except Exception as e:
         logger.error(f"Error polling Gmail inbox: {e}")
-        _AUTH_KEYWORDS = ("401", "No token", "OAuth", "invalid_grant", "invalid_client", "AADSTS", "Unauthorized", "unauthorized", "offset-naive", "offset-aware")
         if any(k in str(e) for k in _AUTH_KEYWORDS):
             await set_auth_error("gmail", str(e))
 
 
 async def poll_personal():
     logger.info("Polling personal inbox (full)...")
-    inbox_ids = set()
     try:
         emails = await graph_get_emails("personal")
         logger.info(f"[personal] Found {len(emails)} emails in inbox")
-
-        for email in emails:
-            graph_id = email.get("id", "unknown")
-            stable_id = email.get("internetMessageId") or graph_id
-            inbox_ids.add(stable_id)
-            subject = email.get("subject", "(no subject)")
-            sender = email.get("from", {}).get("emailAddress", {}).get("address", "unknown")
-            body = email.get("fullBody") or email.get("bodyPreview", "")
-            received_at = email.get("receivedDateTime")
-
-            existing = await get_email_by_id(stable_id)
-            if existing:
-                prev = existing.get("status")
-                if prev not in (None, "pending"):
-                    logger.info(f"[personal] Back in inbox (was {prev}): {subject[:50]}")
-                await ensure_inbox_state(stable_id, graph_id)
-                continue
-
-            rule = await get_sender_rule(sender)
-            if rule and rule['source'] == 'manual' and rule['count'] >= 2:
-                result = {
-                    "classification": rule['classification'],
-                    "confidence": 1.0,
-                    "reason": "sender rule (manual, confirmed)",
-                }
-            else:
-                result = await classify_email(subject, sender, body[:1000])
-            classification = result.get("classification")
-            confidence = result.get("confidence", 0.0)
-
-            action_label, status = await execute_action(
-                account="personal",
-                email_id=graph_id,  # Graph folder-scoped ID for API operations
-                subject=subject,
-                sender=sender,
-                classification=classification,
-                confidence=confidence
-            )
-
-            await log_action(
-                account="personal",
-                email_id=stable_id,  # stable RFC 2822 ID for DB lookups
-                subject=subject,
-                sender=sender,
-                action=action_label,
-                classification=classification,
-                confidence=confidence,
-                notes=result.get("reason"),
-                body=body,
-                received_at=received_at,
-                graph_id=graph_id
-            )
-
-            if status != "pending":
-                await update_email_status(stable_id, status)
-
-            logger.info(f"[personal] {subject[:50]} → {classification} ({confidence:.2f}) → {action_label}")
-
+        inbox_ids = await _process_emails("personal", emails, _normalize_graph_email)
         missing = await mark_missing_as_archived("personal", inbox_ids)
         if missing:
             logger.info(f"[personal] Reconciled {len(missing)} emails no longer in inbox")
         await clear_auth_error("personal")
-
     except Exception as e:
         logger.error(f"Error polling personal inbox: {e}")
-        _AUTH_KEYWORDS = ("401", "No token", "OAuth", "invalid_grant", "invalid_client", "AADSTS", "Unauthorized", "unauthorized", "offset-naive", "offset-aware")
         if any(k in str(e) for k in _AUTH_KEYWORDS):
             await set_auth_error("personal", str(e))
 

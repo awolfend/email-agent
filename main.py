@@ -381,15 +381,17 @@ async def api_restore(email_id: str):
 async def api_delete(email_id: str):
     email = await get_email_by_id(email_id)
     if email:
+        warning = None
         try:
             if email["account"] in ("financial", "personal"):
                 graph_id = email.get("graph_id") or email_id
                 await graph_delete_email(email["account"], graph_id)
             elif email["account"] == "gmail":
                 await gmail_delete_email(email_id)
-        except Exception:
-            pass
+        except Exception as e:
+            warning = str(e)
         await update_email_status(email_id, "deleted", "deleted")
+        return {"ok": True, **({"warning": warning} if warning else {})}
     return {"ok": True}
 
 @app.delete("/api/email/{email_id}/record")

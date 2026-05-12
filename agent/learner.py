@@ -1,6 +1,6 @@
 import os
-import httpx
 import logging
+import anthropic
 
 logger = logging.getLogger(__name__)
 
@@ -47,22 +47,13 @@ async def _synthesize(account: str, examples: list) -> str:
 
     prompt = SYNTHESIS_PROMPT.format(n=len(sample), email_texts=email_texts)
 
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        response = await client.post(
-            "https://api.anthropic.com/v1/messages",
-            headers={
-                "x-api-key": api_key,
-                "anthropic-version": "2023-06-01",
-                "content-type": "application/json",
-            },
-            json={
-                "model": "claude-sonnet-4-6",
-                "max_tokens": 1024,
-                "messages": [{"role": "user", "content": prompt}]
-            }
-        )
-        response.raise_for_status()
-        return response.json()["content"][0]["text"].strip()
+    client = anthropic.AsyncAnthropic(api_key=api_key)
+    message = await client.messages.create(
+        model="claude-sonnet-4-6",
+        max_tokens=1024,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    return message.content[0].text.strip()
 
 
 async def build_voice_profiles() -> dict:

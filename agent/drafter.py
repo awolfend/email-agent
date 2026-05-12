@@ -1,11 +1,10 @@
 import os
 import httpx
 import logging
+import anthropic
 
 logger = logging.getLogger(__name__)
 
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
-ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
 CLAUDE_MODEL = "claude-sonnet-4-6"
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
@@ -80,7 +79,13 @@ Rules:
 - Do not include a signature block — it is added automatically.
 - Do not include a subject line."""
 
-EMAIL_SUFFIX = """\n\nEmail to reply to:
+VOICE_PROFILE_BLOCK = """Style profile derived from Anthony's own sent emails — follow this in addition to the instructions above:
+
+{profile}
+
+"""
+
+USER_TEMPLATE = """Email to reply to:
 Account: {account}
 From: {sender}
 Subject: {subject}
@@ -88,12 +93,6 @@ Body:
 {body}
 
 Draft the reply now. Write only the email body.{guidance_block}"""
-
-VOICE_PROFILE_BLOCK = """Style profile derived from Anthony's own sent emails — follow this in addition to the instructions above:
-
-{profile}
-
-"""
 
 
 async def _get_voice_block(account: str) -> str:
@@ -133,29 +132,25 @@ async def _get_footer(account: str) -> str:
         return ""
 
 
-async def _call_claude(prompt: str) -> str:
-    api_key = os.getenv("ANTHROPIC_API_KEY") or ANTHROPIC_API_KEY
+async def _call_claude(system_prompt: str, user_content: str) -> str:
+    api_key = os.getenv("ANTHROPIC_API_KEY")
     if not api_key:
         raise Exception("ANTHROPIC_API_KEY not set")
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        response = await client.post(
-            ANTHROPIC_URL,
-            headers={
-                "x-api-key": api_key,
-                "anthropic-version": "2023-06-01",
-                "content-type": "application/json",
-            },
-            json={
-                "model": CLAUDE_MODEL,
-                "max_tokens": 1024,
-                "messages": [{"role": "user", "content": prompt}],
-            },
-        )
-        response.raise_for_status()
-        return response.json()["content"][0]["text"].strip()
+    client = anthropic.AsyncAnthropic(api_key=api_key)
+    message = await client.messages.create(
+        model=CLAUDE_MODEL,
+        max_tokens=1024,
+        system=[{
+            "type": "text",
+            "text": system_prompt,
+            "cache_control": {"type": "ephemeral"},
+        }],
+        messages=[{"role": "user", "content": user_content}],
+    )
+    return message.content[0].text.strip()
 
 
-async def _call_openai(prompt: str) -> str:
+async def _call_openai(system_prompt: str, user_content: str) -> str:
     api_key = os.getenv("OPENAI_API_KEY") or OPENAI_API_KEY
     if not api_key:
         raise Exception("OPENAI_API_KEY not set")
@@ -169,7 +164,10 @@ async def _call_openai(prompt: str) -> str:
             json={
                 "model": OPENAI_MODEL,
                 "max_tokens": 1024,
-                "messages": [{"role": "user", "content": prompt}],
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_content},
+                ],
             },
         )
         response.raise_for_status()
@@ -181,24 +179,28 @@ async def generate_draft(account: str, sender: str, subject: str, body: str, gui
     base_prompt = await _get_base_prompt(account)
     guidance_block = f"\n\nAdditional instruction: {guidance.strip()}" if guidance.strip() else ""
 
-    prompt = base_prompt + EMAIL_SUFFIX.format(
+    # System: writing instructions + voice profile (cached — same across all drafts per account)
+    system_prompt = base_prompt
+    if voice_block:
+        system_prompt = voice_block + "\n" + system_prompt
+
+    # User: the specific email to reply to
+    user_content = USER_TEMPLATE.format(
         account=account,
         sender=sender,
         subject=subject,
         body=body[:4000],
         guidance_block=guidance_block,
     )
-    if voice_block:
-        prompt = voice_block + "\n" + prompt
 
     draft = ""
     try:
-        draft = await _call_claude(prompt)
+        draft = await _call_claude(system_prompt, user_content)
         logger.info(f"Draft generated via Claude for: {subject[:50]}")
     except Exception as e:
         logger.warning(f"Claude failed ({e}), trying OpenAI fallback")
         try:
-            draft = await _call_openai(prompt)
+            draft = await _call_openai(system_prompt, user_content)
             logger.info(f"Draft generated via OpenAI for: {subject[:50]}")
         except Exception as e2:
             logger.error(f"OpenAI fallback also failed: {e2}")

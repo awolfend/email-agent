@@ -13,7 +13,8 @@ load_dotenv("config/.env")
 CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
 CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
 
-REDIRECT_URI = "http://localhost:8000/auth/callback/gmail"
+_APP_BASE_URL = os.getenv("APP_BASE_URL", "http://localhost:8000").rstrip("/")
+REDIRECT_URI = f"{_APP_BASE_URL}/auth/callback/gmail"
 AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 GMAIL_BASE = "https://gmail.googleapis.com/gmail/v1/users/me"
