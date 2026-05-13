@@ -269,6 +269,60 @@ async def get_sent_emails(days: int = 90) -> list:
         return emails
 
 
+async def get_email_history(address: str, limit: int = 8) -> list[dict]:
+    """
+    Search across all Gmail labels for recent messages to/from a specific address.
+    Returns list of {subject, date, direction, snippet} dicts, newest first.
+    Fails silently — returns [] on any error.
+    """
+    try:
+        token = await get_valid_token()
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            # Search across all mail (no labelIds = searches everything incl. archive)
+            list_resp = await client.get(
+                f"{GMAIL_BASE}/messages",
+                headers={"Authorization": f"Bearer {token}"},
+                params={"q": f"from:{address} OR to:{address}", "maxResults": limit},
+            )
+            if not list_resp.is_success:
+                return []
+            msg_ids = [m["id"] for m in list_resp.json().get("messages", [])]
+            if not msg_ids:
+                return []
+
+            items = []
+            for msg_id in msg_ids:
+                detail = await client.get(
+                    f"{GMAIL_BASE}/messages/{msg_id}",
+                    headers={"Authorization": f"Bearer {token}"},
+                    params={
+                        "format":          "metadata",
+                        "metadataHeaders": "Subject,From,Date",
+                    },
+                )
+                if not detail.is_success:
+                    continue
+                data    = detail.json()
+                headers = {h["name"]: h["value"] for h in data.get("payload", {}).get("headers", [])}
+                from_hdr = headers.get("From", "").lower()
+                direction = "←" if address.lower() in from_hdr else "→"
+                raw_date  = headers.get("Date", "")
+                try:
+                    from email.utils import parsedate_to_datetime
+                    date = parsedate_to_datetime(raw_date).strftime("%Y-%m-%d")
+                except Exception:
+                    date = raw_date[:10]
+                items.append({
+                    "subject":   headers.get("Subject", "(no subject)"),
+                    "date":      date,
+                    "direction": direction,
+                    "snippet":   data.get("snippet", "")[:200],
+                })
+            return items
+    except Exception:
+        return []
+
+
 async def get_user_profile() -> dict:
     token = await get_valid_token()
     async with httpx.AsyncClient() as client:

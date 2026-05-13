@@ -60,7 +60,8 @@ from agent.poller import start_scheduler, poll_all
 from agent.drafter import generate_draft
 from agent.learner import build_voice_profiles
 from connectors.hubspot import get_contact_context as hubspot_context
-from connectors.graph import get_email_history
+from connectors.graph import get_email_history as graph_email_history
+from connectors.gmail import get_email_history as gmail_email_history
 
 load_dotenv("config/.env")
 
@@ -170,25 +171,31 @@ async def api_generate_draft(email_id: str, body: GenerateDraftRequest = Generat
     sender  = email["sender"] or ""
 
     crm_context = ""
-    if account == "financial" and sender:
-        hs_context, email_history = await asyncio.gather(
-            hubspot_context(sender),
-            get_email_history("financial", sender, limit=8),
-        )
+    if sender:
+        # Gather CRM context (financial only) + email history (all accounts) in parallel
+        if account == "financial":
+            hs_ctx, email_history = await asyncio.gather(
+                hubspot_context(sender),
+                graph_email_history("financial", sender, limit=8),
+            )
+        elif account == "personal":
+            hs_ctx        = ""
+            email_history = await graph_email_history("personal", sender, limit=8)
+        else:  # gmail
+            hs_ctx        = ""
+            email_history = await gmail_email_history(sender, limit=8)
 
         parts = []
-        if hs_context:
-            parts.append(hs_context)
-
+        if hs_ctx:
+            parts.append(hs_ctx)
         if email_history:
-            history_lines = ["--- Email history (M365) ---"]
+            history_lines = ["--- Email history ---"]
             for msg in email_history:
                 subject = msg["subject"] or "(no subject)"
                 snippet = f" — {msg['snippet']}" if msg["snippet"] else ""
                 history_lines.append(f"  [{msg['date']}] {msg['direction']} {subject}{snippet}")
             history_lines.append("--- end email history ---")
             parts.append("\n".join(history_lines))
-
         crm_context = "\n\n".join(parts)
 
     draft = await generate_draft(
