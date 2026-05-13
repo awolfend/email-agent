@@ -80,7 +80,7 @@ Rules:
 - Do not include a signature block — it is added automatically.
 - Do not include a subject line."""
 
-EMAIL_SUFFIX = """\n\nEmail to reply to:
+EMAIL_SUFFIX = """\n\n{crm_block}Email to reply to:
 Account: {account}
 From: {sender}
 Subject: {subject}
@@ -176,10 +176,12 @@ async def _call_openai(prompt: str) -> str:
         return response.json()["choices"][0]["message"]["content"].strip()
 
 
-async def generate_draft(account: str, sender: str, subject: str, body: str, guidance: str = "") -> str:
+async def generate_draft(account: str, sender: str, subject: str, body: str,
+                         guidance: str = "", crm_context: str = "") -> str:
     voice_block = await _get_voice_block(account)
     base_prompt = await _get_base_prompt(account)
     guidance_block = f"\n\nAdditional instruction: {guidance.strip()}" if guidance.strip() else ""
+    crm_block = crm_context.strip() + "\n\n" if crm_context.strip() else ""
 
     prompt = base_prompt + EMAIL_SUFFIX.format(
         account=account,
@@ -187,6 +189,7 @@ async def generate_draft(account: str, sender: str, subject: str, body: str, gui
         subject=subject,
         body=body[:4000],
         guidance_block=guidance_block,
+        crm_block=crm_block,
     )
     if voice_block:
         prompt = voice_block + "\n" + prompt

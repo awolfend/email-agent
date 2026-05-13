@@ -1,3 +1,4 @@
+import asyncio
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.templating import Jinja2Templates
@@ -58,6 +59,8 @@ from db.database import (
 from agent.poller import start_scheduler, poll_all
 from agent.drafter import generate_draft
 from agent.learner import build_voice_profiles
+from connectors.hubspot import get_contact_context as hubspot_context
+from connectors.graph import get_email_history
 
 load_dotenv("config/.env")
 
@@ -163,16 +166,42 @@ async def api_generate_draft(email_id: str, body: GenerateDraftRequest = Generat
     email = await get_email_by_id(email_id)
     if not email:
         return JSONResponse({"draft": ""})
+    account = email["account"]
+    sender  = email["sender"] or ""
+
+    crm_context = ""
+    if account == "financial" and sender:
+        hs_context, email_history = await asyncio.gather(
+            hubspot_context(sender),
+            get_email_history("financial", sender, limit=8),
+        )
+
+        parts = []
+        if hs_context:
+            parts.append(hs_context)
+
+        if email_history:
+            history_lines = ["--- Email history (M365) ---"]
+            for msg in email_history:
+                subject = msg["subject"] or "(no subject)"
+                snippet = f" — {msg['snippet']}" if msg["snippet"] else ""
+                history_lines.append(f"  [{msg['date']}] {msg['direction']} {subject}{snippet}")
+            history_lines.append("--- end email history ---")
+            parts.append("\n".join(history_lines))
+
+        crm_context = "\n\n".join(parts)
+
     draft = await generate_draft(
-        account=email["account"],
-        sender=email["sender"] or "",
+        account=account,
+        sender=sender,
         subject=email["subject"] or "",
         body=email["body"] or "",
         guidance=body.guidance,
+        crm_context=crm_context,
     )
     if draft:
         await update_draft_reply(email_id, draft)
-    return JSONResponse({"draft": draft})
+    return JSONResponse({"draft": draft, "crm_context_loaded": bool(crm_context)})
 
 @app.post("/api/email/{email_id}/send")
 async def api_send(email_id: str, body: SendRequest):

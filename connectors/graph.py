@@ -246,6 +246,47 @@ async def get_sent_emails(account: str, days: int = 90) -> list:
     return all_emails
 
 
+async def get_email_history(account: str, address: str, limit: int = 8) -> list[dict]:
+    """
+    Search across all mail folders for recent messages to/from a specific address.
+    Returns list of {subject, date, direction, snippet} dicts, newest first.
+    Fails silently — returns [] on any error.
+    """
+    try:
+        token = await get_valid_token(account)
+        base  = _mailbox_base(account)
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            resp = await client.get(
+                f"{base}/messages",
+                headers={"Authorization": f"Bearer {token}"},
+                params={
+                    "$search":  f'"{address}"',
+                    "$select":  "subject,receivedDateTime,sentDateTime,from,toRecipients,bodyPreview,isDraft",
+                    "$top":     limit,
+                },
+            )
+            if not resp.is_success:
+                return []
+            items = []
+            for msg in resp.json().get("value", []):
+                if msg.get("isDraft"):
+                    continue
+                from_addr = (msg.get("from") or {}).get("emailAddress", {}).get("address", "").lower()
+                date      = (msg.get("receivedDateTime") or msg.get("sentDateTime") or "")[:10]
+                direction = "←" if from_addr == address.lower() else "→"
+                subject   = (msg.get("subject") or "").strip()
+                snippet   = (msg.get("bodyPreview") or "").strip()[:200]
+                items.append({
+                    "subject":   subject,
+                    "date":      date,
+                    "direction": direction,
+                    "snippet":   snippet,
+                })
+            return items
+    except Exception:
+        return []
+
+
 async def get_user_profile(account: str) -> dict:
     token = await get_valid_token(account)
     async with httpx.AsyncClient() as client:

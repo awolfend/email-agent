@@ -1,5 +1,7 @@
 import logging
 
+import httpx
+
 logger = logging.getLogger(__name__)
 
 SPAM_DELETE_THRESHOLD = 0.95
@@ -49,6 +51,13 @@ async def _move_to_folder(account: str, email_id: str, subject: str, folder_name
             await move_email(email_id, folder_name)
         logger.info(f"[{account}] MOVED to {folder_name}: {subject[:50]}")
         return (f"moved_to_{folder_name.lower().replace(' ', '_')}", "archived")
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 404:
+            # Message no longer at this Graph ID — already moved or deleted externally
+            logger.info(f"[{account}] Message {email_id} already moved (404) — treating as archived")
+            return ("reconciled", "archived")
+        logger.error(f"[{account}] Failed to move {email_id} to {folder_name}: {e}")
+        return ("move_failed", "pending")
     except Exception as e:
         logger.error(f"[{account}] Failed to move {email_id} to {folder_name}: {e}")
         return ("move_failed", "pending")
