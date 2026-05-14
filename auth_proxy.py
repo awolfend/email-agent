@@ -10,7 +10,7 @@ import os
 from dotenv import load_dotenv
 load_dotenv("config/.env")
 
-TARGET_HOST = os.getenv("TAILSCALE_IP", "***TAILSCALE_IP***")
+TARGET_HOST = os.getenv("TAILSCALE_IP", "localhost")
 TARGET_PORT = 8000
 
 

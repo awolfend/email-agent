@@ -222,7 +222,8 @@ async def api_send(email_id: str, body: SendRequest):
     graph_id = email.get("graph_id") or email_id
     try:
         if email["account"] in ("financial", "personal"):
-            cc = ["***FILING_EMAIL_FINANCIAL***"] if email["account"] == "financial" else None
+            _filing_email = os.getenv("FILING_EMAIL_FINANCIAL")
+            cc = [_filing_email] if email["account"] == "financial" and _filing_email else None
             await graph_reply_to_email(email["account"], graph_id, recipients, body.body, cc=cc)
             await graph_archive_email(email["account"], graph_id)
         elif email["account"] == "gmail":
@@ -564,4 +565,4 @@ async def test_account(account: str):
     )
 
 if __name__ == "__main__":
-    uvicorn.run("main:app", host="***TAILSCALE_IP***", port=8000, reload=True)
+    uvicorn.run("main:app", host=os.getenv("TAILSCALE_IP", "127.0.0.1"), port=8000, reload=True)

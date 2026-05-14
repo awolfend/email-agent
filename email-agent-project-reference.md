@@ -41,9 +41,9 @@ Goal: AI agent running on a local Mac mini that autonomously manages email triag
 
 | Account | Email | Platform | API | Status |
 |---|---|---|---|---|
-| Financial planning | `***FINANCIAL_EMAIL***` | Microsoft 365 (corporate) | Microsoft Graph API | ✅ Connected |
-| Tax business | `***GMAIL_EMAIL***` | Gmail | Gmail API | ✅ Connected |
-| Personal | `***PERSONAL_EMAIL***` | Exchange Online (Plan 1) | Microsoft Graph API | ✅ Connected — application permissions |
+| Financial planning | `<FINANCIAL_EMAIL>` | Microsoft 365 (corporate) | Microsoft Graph API | ✅ Connected |
+| Tax business | `<GMAIL_EMAIL>` | Gmail | Gmail API | ✅ Connected |
+| Personal | `<PERSONAL_EMAIL>` | Exchange Online (Plan 1) | Microsoft Graph API | ✅ Connected — application permissions |
 
 ---
 
@@ -51,9 +51,9 @@ Goal: AI agent running on a local Mac mini that autonomously manages email triag
 
 ### Personal account — ✅ Connected via application permissions
 
-`***PERSONAL_EMAIL***` is a real member user in the Intertek Entra ID tenant (Object ID: `***AZURE_OBJECT_ID_PERSONAL***`). Exchange Online Plan 1. Highest volume inbox of the three accounts.
+`<PERSONAL_EMAIL>` is a real member user in the Intertek Entra ID tenant (Object ID: `<AZURE_OBJECT_ID_PERSONAL>`). Exchange Online Plan 1. Highest volume inbox of the three accounts.
 
-**Auth method:** Client credentials flow (`grant_type=client_credentials`) using `AZURE_CLIENT_ID_PERSONAL` + `AZURE_CLIENT_SECRET_PERSONAL`. No user sign-in or OAuth flow. Token cached as `personal_app` in `tokens_graph.json`. All Graph calls use `/users/***PERSONAL_EMAIL***/...`. Permissions: `Mail.ReadWrite`, `Mail.Send`, `Calendars.ReadWrite` — all Application type with admin consent.
+**Auth method:** Client credentials flow (`grant_type=client_credentials`) using `AZURE_CLIENT_ID_PERSONAL` + `AZURE_CLIENT_SECRET_PERSONAL`. No user sign-in or OAuth flow. Token cached as `personal_app` in `tokens_graph.json`. All Graph calls use `/users/<PERSONAL_EMAIL>/...`. Permissions: `Mail.ReadWrite`, `Mail.Send`, `Calendars.ReadWrite` — all Application type with admin consent.
 
 **If 403 after permission changes:** Delete `personal_app` key from `tokens_graph.json` to force fresh token acquisition.
 
@@ -61,15 +61,15 @@ Goal: AI agent running on a local Mac mini that autonomously manages email triag
 
 | Item | Value |
 |---|---|
-| Tenant ID | `***AZURE_TENANT_ID***` |
-| Tenant name | ***TENANT_NAME*** |
+| Tenant ID | `<AZURE_TENANT_ID>` |
+| Tenant name | <TENANT_NAME> |
 
 ### Users in tenant
 
 | Account | Email | Object ID |
 |---|---|---|
-| Financial planning | `***FINANCIAL_EMAIL***` | `***AZURE_OBJECT_ID_FINANCIAL***` |
-| Personal | `***PERSONAL_EMAIL***` | `***AZURE_OBJECT_ID_PERSONAL***` |
+| Financial planning | `<FINANCIAL_EMAIL>` | `<AZURE_OBJECT_ID_FINANCIAL>` |
+| Personal | `<PERSONAL_EMAIL>` | `<AZURE_OBJECT_ID_PERSONAL>` |
 
 ### App registrations
 
@@ -304,7 +304,7 @@ All secrets live in `~/email-agent/config/.env` — never hardcoded, never in gi
 | Default cloud provider for drafting | `DRAFT_DEFAULT_PROVIDER` | claude |
 | Default cloud provider for analysis | `COMPLEX_ANALYSIS_DEFAULT_PROVIDER` | claude |
 | Fallback cloud provider | `FALLBACK_PROVIDER` | gemini |
-| Tailscale IP of active machine | `TAILSCALE_IP` | `***TAILSCALE_IP***` |
+| Tailscale IP of active machine | `TAILSCALE_IP` | `<TAILSCALE_IP>` |
 
 **Migration note:** When Mac mini arrives, update `TAILSCALE_IP`. Confirm Ollama menu bar app starts at login on Mac mini.
 
@@ -387,7 +387,7 @@ Today's goal: [one sentence]
 **What is working:**
 - `email-agent start/stop/restart/debug/status` — Tailscale CLI, Ollama, FastAPI all managed
 - Tailscale fully controlled via CLI — menu bar app not required
-- FastAPI on `***TAILSCALE_IP***:8000`
+- FastAPI on `<TAILSCALE_IP>:8000`
 - All three accounts connected and polling — M365 financial (delegated OAuth), Gmail tax (delegated OAuth), M365 personal (application permissions / client credentials)
 - Full paginated inbox fetch — every email in inbox fetched every poll cycle
 - Reconciliation — pending emails no longer in inbox auto-archived each cycle
@@ -435,7 +435,7 @@ Today's goal: [one sentence]
 
 **Next session — start here:**
 1. `email-agent start`
-2. Confirm dashboard at `http://***TAILSCALE_IP***:8000`
+2. Confirm dashboard at `http://<TAILSCALE_IP>:8000`
 3. Hit Poll Now — verify inbox counts match Outlook and Gmail
 4. Choose next item from Section 12
 
@@ -479,7 +479,7 @@ Today's goal: [one sentence]
 - Draft guidance: optional `guidance` field in `GenerateDraftRequest` appended to prompt as "Additional instruction: …"
 - Settings table: key/value store in SQLite. Keys: `prompt_financial`, `prompt_gmail`, `prompt_personal`, `footer_financial`, `footer_gmail`, `footer_personal`. Read by `get_setting()`, written by `set_setting()`. `GET /api/settings` returns all 6 (DB or defaults). `POST /api/settings` saves one key at a time (allowlist enforced).
 - `.env` rule: credentials, API keys, IDs, secrets, and config values only. Footers and prompts are in SQLite. Never store operational content in `.env`.
-- Personal account auth: client credentials flow (`grant_type=client_credentials`) using `AZURE_CLIENT_ID_PERSONAL` + `AZURE_CLIENT_SECRET_PERSONAL`. No user sign-in. Token cached as `personal_app` in `tokens_graph.json`. All Graph calls use `/users/***PERSONAL_EMAIL***/...`. If 403 after permission changes, delete `personal_app` key from `tokens_graph.json` to force fresh token acquisition.
+- Personal account auth: client credentials flow (`grant_type=client_credentials`) using `AZURE_CLIENT_ID_PERSONAL` + `AZURE_CLIENT_SECRET_PERSONAL`. No user sign-in. Token cached as `personal_app` in `tokens_graph.json`. All Graph calls use `/users/<PERSONAL_EMAIL>/...`. If 403 after permission changes, delete `personal_app` key from `tokens_graph.json` to force fresh token acquisition.
 - Personal account inbox filter shows with yellow dot in sidebar. Account label is `personal` in SQLite.
 - `get_queue(history_limit=500)` signature: pending fetched with no LIMIT clause; history fetched with `LIMIT history_limit`. Do not pass a `limit` keyword — the old param is gone.
 - `filing_history` table: `(sender_domain, target_folder_id)` unique index. `record_filing()` upserts and increments count. `get_filing_suggestions(sender_domain, limit=5)` returns top targets ordered by count DESC.
@@ -499,7 +499,7 @@ Today's goal: [one sentence]
 
 ### 12.1 — Personal M365 account ✅ Connected
 
-`***PERSONAL_EMAIL***` — confirmed real member user in the Intertek Entra ID tenant (Object ID: `***AZURE_OBJECT_ID_PERSONAL***`). Has Exchange Online Plan 1. Highest volume inbox of the three accounts.
+`<PERSONAL_EMAIL>` — confirmed real member user in the Intertek Entra ID tenant (Object ID: `<AZURE_OBJECT_ID_PERSONAL>`). Has Exchange Online Plan 1. Highest volume inbox of the three accounts.
 
 **Attempts made (previous session — did not succeed):**
 1. **Separate certificate for personal app registration** — attempted in Azure portal, was challenged during creation and did not complete.
@@ -508,7 +508,7 @@ Today's goal: [one sentence]
 
 **Error AADSTS50058:** "A silent sign-in request was sent but no user is signed in." Indicates the app attempted silent/cached token acquisition for the personal user but no session existed — interactive auth was needed but not triggered correctly, or MFA/Conditional Access blocked it.
 
-**Resolution:** Application permissions (client credentials flow) on the `email-agent-personal` app registration. `Mail.ReadWrite`, `Mail.Send`, `Calendars.ReadWrite` added as Application type permissions with admin consent granted in Azure portal. Code uses `grant_type=client_credentials` — no user sign-in or OAuth flow required. All Graph calls use `/users/***PERSONAL_EMAIL***/...` instead of `/me/...`. Token cached in `tokens_graph.json` under `personal_app` key, auto-refreshed when expired. Confirmed working 2026-05-08.
+**Resolution:** Application permissions (client credentials flow) on the `email-agent-personal` app registration. `Mail.ReadWrite`, `Mail.Send`, `Calendars.ReadWrite` added as Application type permissions with admin consent granted in Azure portal. Code uses `grant_type=client_credentials` — no user sign-in or OAuth flow required. All Graph calls use `/users/<PERSONAL_EMAIL>/...` instead of `/me/...`. Token cached in `tokens_graph.json` under `personal_app` key, auto-refreshed when expired. Confirmed working 2026-05-08.
 
 **Note:** `get_user_profile("personal")` returns `displayName: null` because `User.Read.All` application permission is not granted — this only affects the `/auth/test/personal` display page, not any dashboard functionality.
 

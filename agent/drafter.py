@@ -1,6 +1,9 @@
 import os
 import httpx
 import logging
+from dotenv import load_dotenv
+
+load_dotenv("config/.env")
 
 logger = logging.getLogger(__name__)
 
@@ -12,9 +15,15 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 OPENAI_URL = "https://api.openai.com/v1/chat/completions"
 OPENAI_MODEL = "gpt-4o"
 
-DEFAULT_PROMPT_FINANCIAL = """You are drafting an email reply on behalf of Anthony Wolfenden, a financial planner based in Queensland, Australia.
+_FINANCIAL_BIZ = os.getenv("FINANCIAL_BUSINESS_NAME", "the financial planning business")
+_TAX_BIZ = os.getenv("TAX_BUSINESS_NAME", "the tax business")
+_AR = os.getenv("AR_NUMBER", "")
+_TAX_TRN = os.getenv("TAX_TRN_NUMBER", "")
+_PERSONAL_EMAIL = os.getenv("PERSONAL_EMAIL", "")
 
-Anthony runs ***FINANCIAL_BUSINESS_NAME***, specialising in superannuation, investments, insurance, cashflow management, and retirement planning. He is an Authorised Representative (AR ***AR_NUMBER***) operating under an AFSL.
+DEFAULT_PROMPT_FINANCIAL = f"""You are drafting an email reply on behalf of Anthony Wolfenden, a financial planner based in Queensland, Australia.
+
+Anthony runs {_FINANCIAL_BIZ}, specialising in superannuation, investments, insurance, cashflow management, and retirement planning. He is an Authorised Representative (AR {_AR}) operating under an AFSL.
 
 Anthony's voice and style — follow this precisely:
 
@@ -36,9 +45,9 @@ Compliance rules — non-negotiable:
 - Do not include a signature block — it is added automatically.
 - Do not include a subject line."""
 
-DEFAULT_PROMPT_GMAIL = """You are drafting an email reply on behalf of Anthony Wolfenden, a financial (tax) adviser based in Queensland, Australia.
+DEFAULT_PROMPT_GMAIL = f"""You are drafting an email reply on behalf of Anthony Wolfenden, a financial (tax) adviser based in Queensland, Australia.
 
-Anthony runs ***TAX_BUSINESS_NAME***, specialising in income tax returns, tax planning, BAS lodgements, SMSF tax compliance, and business structuring. He is a registered Tax Agent (TRN ***TAX_TRN_NUMBER***) and Authorised Representative (AR ***AR_NUMBER***).
+Anthony runs {_TAX_BIZ}, specialising in income tax returns, tax planning, BAS lodgements, SMSF tax compliance, and business structuring. He is a registered Tax Agent (TRN {_TAX_TRN}) and Authorised Representative (AR {_AR}).
 
 Anthony's voice and style — follow this precisely:
 
@@ -59,7 +68,7 @@ Compliance rules — non-negotiable:
 - Do not include a signature block — it is added automatically.
 - Do not include a subject line."""
 
-DEFAULT_PROMPT_PERSONAL = """You are drafting an email reply on behalf of Anthony Wolfenden for his personal email account (***PERSONAL_EMAIL***).
+DEFAULT_PROMPT_PERSONAL = f"""You are drafting an email reply on behalf of Anthony Wolfenden for his personal email account ({_PERSONAL_EMAIL}).
 
 This account handles personal correspondence — family, friends, personal services, subscriptions, and matters unrelated to Anthony's professional businesses.
 
