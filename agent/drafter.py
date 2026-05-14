@@ -102,7 +102,7 @@ Draft the reply now. Write only the email body.{guidance_block}"""
 
 VOICE_PROFILE_BLOCK = f"""Style profile derived from {_AUTHOR_FIRST}'s own sent emails — follow this in addition to the instructions above:
 
-{profile}
+{{profile}}
 
 """
 
