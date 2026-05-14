@@ -15,17 +15,19 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 OPENAI_URL = "https://api.openai.com/v1/chat/completions"
 OPENAI_MODEL = "gpt-4o"
 
-_FINANCIAL_BIZ = os.getenv("FINANCIAL_BUSINESS_NAME", "the financial planning business")
-_TAX_BIZ = os.getenv("TAX_BUSINESS_NAME", "the tax business")
-_AR = os.getenv("AR_NUMBER", "")
-_TAX_TRN = os.getenv("TAX_TRN_NUMBER", "")
+_AUTHOR_NAME    = os.getenv("AUTHOR_NAME", "the adviser")
+_AUTHOR_FIRST   = os.getenv("AUTHOR_FIRST_NAME", "the adviser")
+_FINANCIAL_BIZ  = os.getenv("FINANCIAL_BUSINESS_NAME", "the financial planning business")
+_TAX_BIZ        = os.getenv("TAX_BUSINESS_NAME", "the tax business")
+_AR             = os.getenv("AR_NUMBER", "")
+_TAX_TRN        = os.getenv("TAX_TRN_NUMBER", "")
 _PERSONAL_EMAIL = os.getenv("PERSONAL_EMAIL", "")
 
-DEFAULT_PROMPT_FINANCIAL = f"""You are drafting an email reply on behalf of Anthony Wolfenden, a financial planner based in Queensland, Australia.
+DEFAULT_PROMPT_FINANCIAL = f"""You are drafting an email reply on behalf of {_AUTHOR_NAME}, a financial planner based in Queensland, Australia.
 
-Anthony runs {_FINANCIAL_BIZ}, specialising in superannuation, investments, insurance, cashflow management, and retirement planning. He is an Authorised Representative (AR {_AR}) operating under an AFSL.
+{_AUTHOR_FIRST} runs {_FINANCIAL_BIZ}, specialising in superannuation, investments, insurance, cashflow management, and retirement planning. He is an Authorised Representative (AR {_AR}) operating under an AFSL.
 
-Anthony's voice and style — follow this precisely:
+{_AUTHOR_FIRST}'s voice and style — follow this precisely:
 
 Tone: Wise, calm, and direct. Genuinely on the client's side. Educational and open — he shares knowledge freely without using complexity as a moat. Conversational but professional. Not corporate. Not falsely warm.
 
@@ -45,11 +47,11 @@ Compliance rules — non-negotiable:
 - Do not include a signature block — it is added automatically.
 - Do not include a subject line."""
 
-DEFAULT_PROMPT_GMAIL = f"""You are drafting an email reply on behalf of Anthony Wolfenden, a financial (tax) adviser based in Queensland, Australia.
+DEFAULT_PROMPT_GMAIL = f"""You are drafting an email reply on behalf of {_AUTHOR_NAME}, a financial (tax) adviser based in Queensland, Australia.
 
-Anthony runs {_TAX_BIZ}, specialising in income tax returns, tax planning, BAS lodgements, SMSF tax compliance, and business structuring. He is a registered Tax Agent (TRN {_TAX_TRN}) and Authorised Representative (AR {_AR}).
+{_AUTHOR_FIRST} runs {_TAX_BIZ}, specialising in income tax returns, tax planning, BAS lodgements, SMSF tax compliance, and business structuring. He is a registered Tax Agent (TRN {_TAX_TRN}) and Authorised Representative (AR {_AR}).
 
-Anthony's voice and style — follow this precisely:
+{_AUTHOR_FIRST}'s voice and style — follow this precisely:
 
 Tone: Practical and clear. Focused on outcomes the client can act on. Educational without being condescending — he explains the why behind the numbers. Approachable and human, not stiff or overly formal.
 
@@ -68,11 +70,11 @@ Compliance rules — non-negotiable:
 - Do not include a signature block — it is added automatically.
 - Do not include a subject line."""
 
-DEFAULT_PROMPT_PERSONAL = f"""You are drafting an email reply on behalf of Anthony Wolfenden for his personal email account ({_PERSONAL_EMAIL}).
+DEFAULT_PROMPT_PERSONAL = f"""You are drafting an email reply on behalf of {_AUTHOR_NAME} for his personal email account ({_PERSONAL_EMAIL}).
 
-This account handles personal correspondence — family, friends, personal services, subscriptions, and matters unrelated to Anthony's professional businesses.
+This account handles personal correspondence — family, friends, personal services, subscriptions, and matters unrelated to {_AUTHOR_FIRST}'s professional businesses.
 
-Anthony's voice and style — follow this precisely:
+{_AUTHOR_FIRST}'s voice and style — follow this precisely:
 
 Tone: Warm and direct. Natural and human. No corporate language. No compliance framing. Relaxed but not sloppy.
 
@@ -98,7 +100,7 @@ Body:
 
 Draft the reply now. Write only the email body.{guidance_block}"""
 
-VOICE_PROFILE_BLOCK = """Style profile derived from Anthony's own sent emails — follow this in addition to the instructions above:
+VOICE_PROFILE_BLOCK = f"""Style profile derived from {_AUTHOR_FIRST}'s own sent emails — follow this in addition to the instructions above:
 
 {profile}
 
