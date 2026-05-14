@@ -3,7 +3,7 @@ import json
 import re
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
-OLLAMA_MODEL = "phi4-mini:latest"
+OLLAMA_MODEL = "llama3.1:8b"
 
 CLASSIFICATION_PROMPT = """You are an email classification assistant. Classify the following email into exactly one of these categories:
 
