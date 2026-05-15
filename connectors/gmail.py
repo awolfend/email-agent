@@ -18,10 +18,12 @@ REDIRECT_URI = f"{_APP_BASE_URL}/auth/callback/gmail"
 AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 GMAIL_BASE = "https://gmail.googleapis.com/gmail/v1/users/me"
+PEOPLE_BASE = "https://people.googleapis.com/v1"
 
 SCOPES = " ".join([
     "https://www.googleapis.com/auth/gmail.modify",
     "https://www.googleapis.com/auth/calendar",
+    "https://www.googleapis.com/auth/contacts.readonly",
     "https://www.googleapis.com/auth/userinfo.email",
     "https://www.googleapis.com/auth/userinfo.profile",
     "openid",
@@ -741,3 +743,45 @@ async def import_mime(label_id: str, mime_bytes: bytes) -> str:
                 json={"addLabelIds": [label_id], "removeLabelIds": ["INBOX"]},
             )
         return msg_id
+
+
+async def search_contacts(q: str, limit: int = 10) -> list[dict]:
+    """
+    Search Gmail contacts via the People API.
+    Returns [{ name, email, source: 'contacts' }].
+    Fails silently — returns [] if scope not granted or any error.
+    """
+    if not q:
+        return []
+    try:
+        token = await get_valid_token()
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(
+                f"{PEOPLE_BASE}/people:searchContacts",
+                headers={"Authorization": f"Bearer {token}"},
+                params={
+                    "query": q,
+                    "readMask": "names,emailAddresses,organizations",
+                    "pageSize": limit,
+                },
+            )
+        if not resp.is_success:
+            return []
+        results = []
+        for item in resp.json().get("results", []):
+            person = item.get("person", {})
+            names = person.get("names", [])
+            emails = person.get("emailAddresses", [])
+            orgs = person.get("organizations", [])
+            name = next((n.get("displayName", "") for n in names if n.get("displayName")), "")
+            email = next((e.get("value", "") for e in emails if e.get("value")), "")
+            company = next((o.get("name", "") for o in orgs if o.get("name")), "")
+            if not email:
+                continue
+            entry = {"name": name or email, "email": email.strip(), "source": "contacts"}
+            if company:
+                entry["company"] = company
+            results.append(entry)
+        return results
+    except Exception:
+        return []

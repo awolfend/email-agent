@@ -45,6 +45,7 @@ from connectors.gmail import (
     file_to_label as gmail_file_to_label,
     export_mime as gmail_export_mime,
     import_mime as gmail_import_mime,
+    search_contacts as gmail_search_contacts,
 )
 from db.database import (
     init_db, get_queue, get_stats,
@@ -409,6 +410,8 @@ async def api_contacts_search(q: str = "", account: str = "financial"):
         searches.append(hubspot_search_contacts(q))
     if account in ("financial", "personal"):
         searches.append(graph_search_contacts(account, q))
+    if account == "gmail":
+        searches.append(gmail_search_contacts(q))
     searches.append(search_contact_history(account, q))
 
     batches = await asyncio.gather(*searches, return_exceptions=True)

@@ -1125,6 +1125,11 @@
             gap: 12px;
             margin-top: 14px;
         }
+        .settings-build-btn-secondary {
+            margin-top: 8px;
+            border-color: var(--text-dimmer);
+            color: var(--text-dim);
+        }
 
         /* ---- Mobile-only elements (hidden on desktop) ---- */
         #hamburger { display: none; }
@@ -1636,6 +1641,7 @@
             </div>
             <div style="margin-top:12px;">
                 <button class="settings-build-btn" onclick="saveAccountSettings('gmail')">💾 Save Tax Settings</button>
+                <button class="settings-build-btn settings-build-btn-secondary" onclick="openAuthLogin('gmail')" title="Re-authorize to grant contact search access">↻ Re-authorize Gmail</button>
             </div>
         </div>
     </div>
