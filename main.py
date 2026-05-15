@@ -62,6 +62,7 @@ from db.database import (
     save_meeting_proposal, save_meeting_slot,
     get_meeting_proposal, get_slots_for_proposal,
     get_open_proposals_for_client,
+    update_slot_status, update_proposal_status,
 )
 from agent.poller import start_scheduler, poll_all
 from agent.drafter import generate_draft, generate_compose_draft
@@ -73,12 +74,14 @@ from connectors.graph import (
     get_busy_windows as graph_get_busy_windows,
     create_calendar_hold as graph_create_hold,
     delete_calendar_event as graph_delete_event,
+    create_confirmed_event as graph_create_confirmed,
 )
 from connectors.gmail import (
     get_email_history as gmail_email_history,
     get_busy_windows as gmail_get_busy_windows,
     create_calendar_hold as gmail_create_hold,
     delete_calendar_event as gmail_delete_event,
+    create_confirmed_event as gmail_create_confirmed,
 )
 
 load_dotenv("config/.env")
@@ -682,6 +685,132 @@ async def api_get_meeting(proposal_id: int):
         return JSONResponse({"error": "Not found"}, status_code=404)
     slots = await get_slots_for_proposal(proposal_id)
     return JSONResponse({"proposal": proposal, "slots": slots})
+
+
+async def _delete_slot_holds(slot: dict):
+    """Delete all calendar hold events for a slot across owning + mirror calendars. Fails silently."""
+    own_id    = slot.get("owning_calendar_event_id")
+    fin_id    = slot.get("mirror_event_id_financial")
+    tax_id    = slot.get("mirror_event_id_google_tax")
+    # Determine which account owns this slot (from proposal, looked up by caller)
+    account   = slot.get("_account", "financial")
+
+    coros = []
+    if own_id:
+        if account == "gmail":
+            coros.append(gmail_delete_event(own_id))
+        else:
+            coros.append(graph_delete_event(account, own_id))
+    if fin_id:
+        coros.append(graph_delete_event("financial", fin_id))
+    if tax_id:
+        coros.append(gmail_delete_event(tax_id))
+    if coros:
+        await asyncio.gather(*coros, return_exceptions=True)
+
+
+@app.post("/api/meeting/{proposal_id}/confirm/{slot_id}")
+async def api_meeting_confirm(proposal_id: int, slot_id: int):
+    """
+    Confirm a meeting slot:
+    1. Create a confirmed calendar event in the owning calendar with the client as attendee.
+    2. Delete tentative holds for all other slots (owning + mirrors).
+    3. Mark the confirmed slot as 'confirmed', others as 'declined'.
+    4. Mark the proposal as 'confirmed'.
+    """
+    proposal = await get_meeting_proposal(proposal_id)
+    if not proposal:
+        return JSONResponse({"ok": False, "error": "Proposal not found"}, status_code=404)
+    if proposal["status"] != "pending":
+        return JSONResponse({"ok": False, "error": f"Proposal is already {proposal['status']}"}, status_code=409)
+
+    slots = await get_slots_for_proposal(proposal_id)
+    confirmed_slot = next((s for s in slots if s["id"] == slot_id), None)
+    if not confirmed_slot:
+        return JSONResponse({"ok": False, "error": "Slot not found"}, status_code=404)
+
+    account      = proposal["account"]
+    client_email = proposal["client_email"]
+    client_name  = proposal.get("client_name", "")
+    # Strip "Name <email>" format if present
+    name_match = re.search(r'^(.*?)\s*<[^>]+>$', client_name)
+    if name_match:
+        client_name = name_match.group(1).strip()
+
+    subject = proposal.get("subject", "Meeting")
+
+    # Create confirmed event in owning calendar
+    s_iso, e_iso = confirmed_slot["slot_start"], confirmed_slot["slot_end"]
+    if account == "gmail":
+        event_id = await gmail_create_confirmed(s_iso, e_iso, subject, client_email, client_name)
+    else:
+        event_id = await graph_create_confirmed(account, s_iso, e_iso, subject, client_email, client_name)
+
+    # Delete holds for all OTHER tentative slots
+    other_slots = [s for s in slots if s["id"] != slot_id and s["status"] == "tentative"]
+    for s in other_slots:
+        s["_account"] = account
+    await asyncio.gather(*[_delete_slot_holds(s) for s in other_slots], return_exceptions=True)
+
+    # Update DB: confirmed slot → confirmed, others → declined, proposal → confirmed
+    await update_slot_status(slot_id, "confirmed")
+    for s in other_slots:
+        await update_slot_status(s["id"], "declined")
+    await update_proposal_status(proposal_id, "confirmed")
+
+    return JSONResponse({"ok": True, "event_id": event_id or None})
+
+
+@app.post("/api/meeting/{proposal_id}/decline-slot/{slot_id}")
+async def api_meeting_decline_slot(proposal_id: int, slot_id: int):
+    """
+    Decline a single meeting slot: delete its calendar holds and mark it declined.
+    If all slots are now declined, mark the proposal declined too.
+    """
+    proposal = await get_meeting_proposal(proposal_id)
+    if not proposal:
+        return JSONResponse({"ok": False, "error": "Proposal not found"}, status_code=404)
+
+    slots = await get_slots_for_proposal(proposal_id)
+    target = next((s for s in slots if s["id"] == slot_id), None)
+    if not target:
+        return JSONResponse({"ok": False, "error": "Slot not found"}, status_code=404)
+
+    target["_account"] = proposal["account"]
+    await _delete_slot_holds(target)
+    await update_slot_status(slot_id, "declined")
+
+    # If no tentative slots remain, close the proposal
+    remaining = [s for s in slots if s["id"] != slot_id and s["status"] == "tentative"]
+    if not remaining:
+        await update_proposal_status(proposal_id, "declined")
+
+    return JSONResponse({"ok": True})
+
+
+@app.post("/api/meeting/{proposal_id}/decline")
+async def api_meeting_decline(proposal_id: int):
+    """
+    Decline all slots for a proposal: delete all holds and mark everything declined.
+    """
+    proposal = await get_meeting_proposal(proposal_id)
+    if not proposal:
+        return JSONResponse({"ok": False, "error": "Proposal not found"}, status_code=404)
+    if proposal["status"] != "pending":
+        return JSONResponse({"ok": False, "error": f"Proposal is already {proposal['status']}"}, status_code=409)
+
+    slots = await get_slots_for_proposal(proposal_id)
+    account = proposal["account"]
+    for s in slots:
+        s["_account"] = account
+    tentative = [s for s in slots if s["status"] == "tentative"]
+    if tentative:
+        await asyncio.gather(*[_delete_slot_holds(s) for s in tentative], return_exceptions=True)
+        for s in tentative:
+            await update_slot_status(s["id"], "declined")
+
+    await update_proposal_status(proposal_id, "declined")
+    return JSONResponse({"ok": True})
 
 
 def _find_free_slots(

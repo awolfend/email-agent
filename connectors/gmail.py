@@ -608,6 +608,39 @@ async def create_calendar_hold(start_iso: str, end_iso: str, title: str = "Hold"
         return ""
 
 
+async def create_confirmed_event(start_iso: str, end_iso: str,
+                                  title: str, client_email: str, client_name: str = "") -> str:
+    """
+    Create a confirmed Google Calendar event with the client as attendee.
+    sendUpdates='all' causes Google to email the invite. Returns event id, or "" on failure.
+    """
+    try:
+        token = await get_valid_token()
+        s_dt  = datetime.fromisoformat(start_iso).astimezone(timezone.utc)
+        e_dt  = datetime.fromisoformat(end_iso).astimezone(timezone.utc)
+        event = {
+            "summary": title,
+            "status": "confirmed",
+            "transparency": "opaque",
+            "start": {"dateTime": s_dt.isoformat(), "timeZone": "UTC"},
+            "end":   {"dateTime": e_dt.isoformat(), "timeZone": "UTC"},
+            "attendees": [{"email": client_email, "displayName": client_name or client_email}],
+        }
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            resp = await client.post(
+                f"{CALENDAR_BASE}/calendars/primary/events",
+                headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+                json=event,
+                params={"sendUpdates": "all"},
+            )
+            resp.raise_for_status()
+            return resp.json().get("id", "")
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(f"gmail create_confirmed_event failed: {e}")
+        return ""
+
+
 async def delete_calendar_event(event_id: str) -> bool:
     """Delete a Google Calendar event by id. Returns True on success."""
     try:

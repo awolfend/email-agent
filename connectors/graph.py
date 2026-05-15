@@ -597,6 +597,39 @@ async def create_calendar_hold(account: str, start_iso: str, end_iso: str, title
         return ""
 
 
+async def create_confirmed_event(account: str, start_iso: str, end_iso: str,
+                                  title: str, client_email: str, client_name: str = "") -> str:
+    """
+    Create a confirmed calendar event with the client as a required attendee.
+    Graph sends them an invite automatically. Returns the event id, or "" on failure.
+    """
+    try:
+        token = await get_valid_token(account)
+        base  = _mailbox_base(account)
+        s_dt  = datetime.fromisoformat(start_iso).astimezone(timezone.utc)
+        e_dt  = datetime.fromisoformat(end_iso).astimezone(timezone.utc)
+        attendee = {"emailAddress": {"address": client_email, "name": client_name or client_email}, "type": "required"}
+        payload = {
+            "subject": title,
+            "showAs": "busy",
+            "isAllDay": False,
+            "start": {"dateTime": s_dt.strftime("%Y-%m-%dT%H:%M:%S"), "timeZone": "UTC"},
+            "end":   {"dateTime": e_dt.strftime("%Y-%m-%dT%H:%M:%S"), "timeZone": "UTC"},
+            "attendees": [attendee],
+        }
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            resp = await client.post(
+                f"{base}/calendar/events",
+                headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+                json=payload,
+            )
+            resp.raise_for_status()
+            return resp.json().get("id", "")
+    except Exception as e:
+        logger.warning(f"create_confirmed_event failed ({account}): {e}")
+        return ""
+
+
 async def delete_calendar_event(account: str, event_id: str) -> bool:
     """Delete a calendar event by its Graph event id. Returns True on success."""
     try:
