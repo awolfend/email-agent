@@ -1126,9 +1126,14 @@
             margin-top: 14px;
         }
         .settings-build-btn-secondary {
-            margin-top: 8px;
             border-color: var(--text-dimmer);
             color: var(--text-dim);
+        }
+        .settings-btn-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 12px;
         }
 
         /* ---- Mobile-only elements (hidden on desktop) ---- */
@@ -1594,8 +1599,9 @@
                 <div class="settings-label">Email footer / signature</div>
                 <textarea id="footer-financial" class="settings-textarea" rows="6" spellcheck="false"></textarea>
             </div>
-            <div style="margin-top:12px;">
+            <div class="settings-btn-row">
                 <button class="settings-build-btn" onclick="saveAccountSettings('financial')">💾 Save Financial Settings</button>
+                <button class="settings-build-btn settings-build-btn-secondary" onclick="openAuthLogin('financial')">↻ Re-authorize Financial</button>
             </div>
         </div>
 
@@ -1616,7 +1622,7 @@
                 <div class="settings-label">Email footer / signature</div>
                 <textarea id="footer-personal" class="settings-textarea" rows="6" spellcheck="false"></textarea>
             </div>
-            <div style="margin-top:12px;">
+            <div class="settings-btn-row">
                 <button class="settings-build-btn" onclick="saveAccountSettings('personal')">💾 Save Personal Settings</button>
             </div>
         </div>
@@ -1639,9 +1645,9 @@
                 <div class="settings-label">Email footer / signature</div>
                 <textarea id="footer-gmail" class="settings-textarea" rows="6" spellcheck="false"></textarea>
             </div>
-            <div style="margin-top:12px;">
+            <div class="settings-btn-row">
                 <button class="settings-build-btn" onclick="saveAccountSettings('gmail')">💾 Save Tax Settings</button>
-                <button class="settings-build-btn settings-build-btn-secondary" onclick="openAuthLogin('gmail')" title="Re-authorize to grant contact search access">↻ Re-authorize Gmail</button>
+                <button class="settings-build-btn settings-build-btn-secondary" onclick="openAuthLogin('gmail')">↻ Re-authorize Gmail</button>
             </div>
         </div>
     </div>
