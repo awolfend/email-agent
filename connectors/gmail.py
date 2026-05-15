@@ -414,7 +414,7 @@ async def send_email(to: str, subject: str, body: str,
         if not response.is_success:
             raise Exception(f"Gmail send failed {response.status_code}: {response.text}")
         msg_id = response.json().get("id", "")
-        logging.getLogger(__name__).info(f"[gmail] sent message id={msg_id} thread={thread_id}")
+        logger.info(f"[gmail] sent message id={msg_id} thread={thread_id}")
         return msg_id
 
 
@@ -539,31 +539,37 @@ async def get_busy_windows(start_dt: datetime, end_dt: datetime) -> list[tuple]:
             "timeMax":      end_dt.astimezone(timezone.utc).isoformat(),
             "singleEvents": "true",
             "maxResults":   250,
-            "fields":       "items(start,end,status,transparency)",
+            "fields":       "nextPageToken,items(start,end,status,transparency)",
         }
-        async with httpx.AsyncClient(timeout=20.0) as client:
-            resp = await client.get(
-                f"{CALENDAR_BASE}/calendars/primary/events",
-                headers={"Authorization": f"Bearer {token}"},
-                params=params,
-            )
-            resp.raise_for_status()
         busy = []
-        for ev in resp.json().get("items", []):
-            if ev.get("status") == "cancelled":
-                continue
-            if ev.get("transparency") == "transparent":
-                continue
-            s = ev.get("start", {})
-            e = ev.get("end", {})
-            if "dateTime" not in s:
-                continue  # all-day event — no fixed time to block
-            s_dt = datetime.fromisoformat(s["dateTime"]).astimezone(timezone.utc)
-            e_dt = datetime.fromisoformat(e["dateTime"]).astimezone(timezone.utc)
-            busy.append((s_dt, e_dt))
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            while True:
+                resp = await client.get(
+                    f"{CALENDAR_BASE}/calendars/primary/events",
+                    headers={"Authorization": f"Bearer {token}"},
+                    params=params,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                for ev in data.get("items", []):
+                    if ev.get("status") == "cancelled":
+                        continue
+                    if ev.get("transparency") == "transparent":
+                        continue
+                    s = ev.get("start", {})
+                    e = ev.get("end", {})
+                    if "dateTime" not in s:
+                        continue  # all-day event
+                    s_dt = datetime.fromisoformat(s["dateTime"]).astimezone(timezone.utc)
+                    e_dt = datetime.fromisoformat(e["dateTime"]).astimezone(timezone.utc)
+                    busy.append((s_dt, e_dt))
+                next_page = data.get("nextPageToken")
+                if not next_page:
+                    break
+                params["pageToken"] = next_page
         return busy
     except Exception as e:
-        logging.getLogger(__name__).debug(f"gmail get_busy_windows failed: {e}")
+        logger.debug(f"gmail get_busy_windows failed: {e}")
         return []
 
 
@@ -592,7 +598,7 @@ async def create_calendar_hold(start_iso: str, end_iso: str, title: str = "Hold"
             resp.raise_for_status()
             return resp.json().get("id", "")
     except Exception as e:
-        logging.getLogger(__name__).warning(f"gmail create_calendar_hold failed: {e}")
+        logger.warning(f"gmail create_calendar_hold failed: {e}")
         return ""
 
 
@@ -624,7 +630,7 @@ async def create_confirmed_event(start_iso: str, end_iso: str,
             resp.raise_for_status()
             return resp.json().get("id", "")
     except Exception as e:
-        logging.getLogger(__name__).warning(f"gmail create_confirmed_event failed: {e}")
+        logger.warning(f"gmail create_confirmed_event failed: {e}")
         return ""
 
 
@@ -639,7 +645,7 @@ async def delete_calendar_event(event_id: str) -> bool:
             )
             return resp.status_code in (200, 204)
     except Exception as e:
-        logging.getLogger(__name__).warning(f"gmail delete_calendar_event failed: {e}")
+        logger.warning(f"gmail delete_calendar_event failed: {e}")
         return False
 
 

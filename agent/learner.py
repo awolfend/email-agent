@@ -2,6 +2,7 @@ import os
 import httpx
 import logging
 from dotenv import load_dotenv
+from agent.drafter import ANTHROPIC_URL, CLAUDE_MODEL
 
 load_dotenv("config/.env")
 
@@ -54,14 +55,14 @@ async def _synthesize(account: str, examples: list) -> str:
 
     async with httpx.AsyncClient(timeout=60.0) as client:
         response = await client.post(
-            "https://api.anthropic.com/v1/messages",
+            ANTHROPIC_URL,
             headers={
                 "x-api-key": api_key,
                 "anthropic-version": "2023-06-01",
                 "content-type": "application/json",
             },
             json={
-                "model": "claude-sonnet-4-6",
+                "model": CLAUDE_MODEL,
                 "max_tokens": 1024,
                 "messages": [{"role": "user", "content": prompt}]
             }
