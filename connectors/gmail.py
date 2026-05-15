@@ -393,7 +393,8 @@ async def mark_as_read(email_id: str):
 
 
 async def send_email(to: str, subject: str, body: str,
-                     thread_id: str = None, in_reply_to: str = None) -> str:
+                     thread_id: str = None, in_reply_to: str = None,
+                     cc: str = None) -> str:
     """Send an email and return the Gmail message ID of the sent message."""
     token = await get_valid_token()
     profile = await get_user_profile()
@@ -403,6 +404,8 @@ async def send_email(to: str, subject: str, body: str,
     mime["From"] = from_addr
     mime["To"] = to
     mime["Subject"] = subject
+    if cc:
+        mime["Cc"] = cc
     if in_reply_to:
         mime["In-Reply-To"] = in_reply_to
         mime["References"] = in_reply_to
@@ -573,6 +576,52 @@ async def get_busy_windows(start_dt: datetime, end_dt: datetime) -> list[tuple]:
         import logging
         logging.getLogger(__name__).debug(f"gmail get_busy_windows failed: {e}")
         return []
+
+
+async def create_calendar_hold(start_iso: str, end_iso: str, title: str = "Hold") -> str:
+    """
+    Create a tentative calendar hold on Google Calendar primary.
+    Returns the Google Calendar event id, or "" on failure.
+    """
+    try:
+        token = await get_valid_token()
+        s_dt = datetime.fromisoformat(start_iso).astimezone(timezone.utc)
+        e_dt = datetime.fromisoformat(end_iso).astimezone(timezone.utc)
+        event = {
+            "summary": title,
+            "status": "tentative",
+            "transparency": "opaque",
+            "start": {"dateTime": s_dt.isoformat(), "timeZone": "UTC"},
+            "end":   {"dateTime": e_dt.isoformat(), "timeZone": "UTC"},
+        }
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            resp = await client.post(
+                f"{CALENDAR_BASE}/calendars/primary/events",
+                headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+                json=event,
+            )
+            resp.raise_for_status()
+            return resp.json().get("id", "")
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(f"gmail create_calendar_hold failed: {e}")
+        return ""
+
+
+async def delete_calendar_event(event_id: str) -> bool:
+    """Delete a Google Calendar event by id. Returns True on success."""
+    try:
+        token = await get_valid_token()
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            resp = await client.delete(
+                f"{CALENDAR_BASE}/calendars/primary/events/{event_id}",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            return resp.status_code in (200, 204)
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(f"gmail delete_calendar_event failed: {e}")
+        return False
 
 
 async def move_email(email_id: str, folder_name: str):

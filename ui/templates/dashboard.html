@@ -635,6 +635,273 @@
         }
         #file-folder-list { overflow-y: auto; flex: 1; min-height: 0; padding-bottom: 4px; }
 
+        /* ---- Compose modal ---- */
+        #compose-btn {
+            background: var(--accent);
+            border: none;
+            border-radius: 6px;
+            color: white;
+            cursor: pointer;
+            font-size: 11px;
+            font-weight: 600;
+            padding: 5px 11px;
+            white-space: nowrap;
+            flex-shrink: 0;
+        }
+        #compose-btn:hover { background: #3b68e8; }
+        .compose-modal {
+            max-width: 680px;
+            width: 96%;
+            max-height: 92vh;
+            overflow-y: auto;
+            gap: 0;
+            padding: 20px 24px;
+        }
+        .compose-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 14px;
+        }
+        .compose-header h3 { font-size: 15px; font-weight: 600; }
+        .compose-close-btn {
+            background: none;
+            border: none;
+            color: var(--text-dim);
+            cursor: pointer;
+            font-size: 18px;
+            padding: 0 4px;
+            line-height: 1;
+        }
+        .compose-close-btn:hover { color: var(--text); }
+        .compose-account-tabs {
+            display: flex;
+            gap: 4px;
+            border-bottom: 1px solid var(--border);
+            margin-bottom: 16px;
+        }
+        .compose-tab-btn {
+            background: none;
+            border: none;
+            border-bottom: 2px solid transparent;
+            color: var(--text-dim);
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: 600;
+            padding: 6px 12px;
+            margin-bottom: -1px;
+            transition: all 0.15s;
+        }
+        .compose-tab-btn:hover { color: var(--text); }
+        .compose-tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
+        .compose-field-row {
+            display: flex;
+            align-items: flex-start;
+            gap: 10px;
+            margin-bottom: 10px;
+            position: relative;
+        }
+        .compose-label {
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--text-dim);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            padding-top: 9px;
+            width: 32px;
+            flex-shrink: 0;
+        }
+        .compose-input {
+            flex: 1;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--text);
+            font-size: 13px;
+            padding: 7px 11px;
+            font-family: inherit;
+        }
+        .compose-input:focus { outline: none; border-color: var(--accent); }
+        .compose-autocomplete {
+            position: absolute;
+            top: 100%;
+            left: 42px;
+            right: 0;
+            background: var(--surface2);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            z-index: 310;
+            max-height: 180px;
+            overflow-y: auto;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+        }
+        .compose-autocomplete-item {
+            padding: 8px 12px;
+            cursor: pointer;
+            font-size: 12px;
+            display: flex;
+            flex-direction: column;
+            gap: 1px;
+        }
+        .compose-autocomplete-item:hover { background: var(--surface); }
+        .compose-autocomplete-name { color: var(--text); font-weight: 500; }
+        .compose-autocomplete-email { color: var(--text-dimmer); font-size: 11px; }
+        .compose-autocomplete-company { color: var(--text-dimmer); font-size: 10px; }
+        .compose-chip-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            margin-bottom: 12px;
+        }
+        .compose-chip {
+            background: var(--surface2);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            color: var(--text-dim);
+            cursor: pointer;
+            font-size: 11px;
+            padding: 3px 10px;
+            transition: all 0.15s;
+        }
+        .compose-chip:hover { border-color: var(--accent); color: var(--accent); }
+        .compose-section-label {
+            font-size: 10px;
+            font-weight: 700;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            color: var(--text-dimmer);
+            margin-bottom: 6px;
+        }
+        .compose-meeting-panel {
+            background: var(--surface2);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 14px 16px;
+            margin-bottom: 12px;
+            display: none;
+            flex-direction: column;
+            gap: 12px;
+        }
+        .compose-meeting-panel.show { display: flex; }
+        .compose-meeting-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        .compose-meeting-label { font-size: 11px; color: var(--text-dim); width: 72px; flex-shrink: 0; }
+        .compose-select {
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--text);
+            font-size: 12px;
+            padding: 5px 8px;
+            font-family: inherit;
+        }
+        .compose-select:focus { outline: none; border-color: var(--accent); }
+        .compose-slots-list { display: flex; flex-direction: column; gap: 6px; }
+        .compose-slot-row { display: flex; align-items: center; gap: 8px; }
+        .compose-slot-num { font-size: 11px; color: var(--text-dimmer); width: 16px; flex-shrink: 0; }
+        .compose-slot-input {
+            flex: 1;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--text);
+            font-size: 12px;
+            padding: 5px 10px;
+            font-family: inherit;
+        }
+        .compose-slot-input:focus { outline: none; border-color: var(--accent); }
+        .compose-invite-note { font-size: 10px; color: var(--text-dimmer); font-style: italic; }
+        .compose-meeting-title { font-size: 12px; font-weight: 600; color: var(--text); margin-bottom: 2px; }
+        .compose-meeting-label-spaced { margin-left: 8px; }
+        .compose-find-slots-btn {
+            background: none;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--text-dim);
+            cursor: pointer;
+            font-size: 11px;
+            padding: 4px 10px;
+            transition: all 0.15s;
+            white-space: nowrap;
+        }
+        .compose-find-slots-btn:hover { border-color: var(--accent); color: var(--accent); }
+        .compose-draft-area {
+            width: 100%;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--text);
+            font-size: 13px;
+            padding: 10px 12px;
+            font-family: inherit;
+            resize: vertical;
+            min-height: 140px;
+            line-height: 1.6;
+            margin-bottom: 10px;
+        }
+        .compose-draft-area:focus { outline: none; border-color: var(--accent); }
+        .compose-context-chips {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 5px;
+            margin-bottom: 10px;
+        }
+        .compose-context-chip {
+            background: rgba(79,124,255,0.12);
+            border: 1px solid rgba(79,124,255,0.3);
+            border-radius: 10px;
+            color: var(--accent);
+            font-size: 10px;
+            padding: 2px 8px;
+        }
+        .compose-btn-row {
+            display: flex;
+            gap: 8px;
+            justify-content: flex-end;
+            flex-wrap: wrap;
+        }
+        .compose-generate-btn {
+            background: var(--surface2);
+            border: 1px solid var(--accent);
+            border-radius: 6px;
+            color: var(--accent);
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: 600;
+            padding: 8px 16px;
+            transition: all 0.15s;
+        }
+        .compose-generate-btn:hover { background: rgba(79,124,255,0.1); }
+        .compose-generate-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .compose-send-btn {
+            background: var(--accent);
+            border: none;
+            border-radius: 6px;
+            color: white;
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: 600;
+            padding: 8px 16px;
+            transition: all 0.15s;
+        }
+        .compose-send-btn:hover { background: #3b68e8; }
+        .compose-send-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .compose-cancel-btn {
+            background: none;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--text-dim);
+            cursor: pointer;
+            font-size: 12px;
+            padding: 8px 16px;
+            transition: all 0.15s;
+        }
+        .compose-cancel-btn:hover { color: var(--text); border-color: var(--text-dim); }
+
         .confidence-bar { height: 3px; background: var(--border); border-radius: 2px; margin-top: 4px; overflow: hidden; }
         .confidence-fill { height: 100%; border-radius: 2px; background: var(--accent); }
         .generating { opacity: 0.6; font-style: italic; }
@@ -1039,6 +1306,7 @@
             <button class="sort-btn active" id="sort-btn-classification" onclick="setSort('classification')">⬆ Priority</button>
             <button class="sort-btn" id="sort-btn-date" onclick="setSort('date')">↓ Newest</button>
         </div>
+        <button type="button" onclick="openCompose()" id="compose-btn">✍ Compose</button>
     </div>
     <div id="history-tabs">
         <button class="history-tab active" onclick="setHistoryTab('sent', this)">✉️ Sent</button>
@@ -1306,6 +1574,91 @@
         <div id="file-folder-list" style="overflow-y:auto;flex:1;min-height:120px;"></div>
         <div class="overlay-actions">
             <button class="action-btn" onclick="cancelFile()">Cancel</button>
+        </div>
+    </div>
+</div>
+
+<!-- Compose overlay -->
+<div class="overlay" id="compose-overlay">
+    <div class="overlay-box compose-modal">
+        <div class="compose-header">
+            <h3>✍ New Email</h3>
+            <button type="button" class="compose-close-btn" onclick="closeCompose()">✕</button>
+        </div>
+
+        <div class="compose-account-tabs">
+            <button type="button" class="compose-tab-btn active" id="ctab-financial" onclick="switchComposeAccount('financial')">💼 Financial</button>
+            <button type="button" class="compose-tab-btn" id="ctab-gmail" onclick="switchComposeAccount('gmail')">📧 Tax</button>
+            <button type="button" class="compose-tab-btn" id="ctab-personal" onclick="switchComposeAccount('personal')">🏠 Personal</button>
+        </div>
+
+        <div class="compose-field-row">
+            <span class="compose-label">To</span>
+            <input type="text" class="compose-input" id="compose-to" placeholder="Name or email…" oninput="composeContactInput(this, 'compose-to-ac')" autocomplete="off" />
+            <div class="compose-autocomplete" id="compose-to-ac" style="display:none;"></div>
+        </div>
+
+        <div class="compose-field-row">
+            <span class="compose-label">CC</span>
+            <input type="text" class="compose-input" id="compose-cc" placeholder="Optional CC…" oninput="composeContactInput(this, 'compose-cc-ac')" autocomplete="off" />
+            <div class="compose-autocomplete" id="compose-cc-ac" style="display:none;"></div>
+        </div>
+
+        <div class="compose-field-row">
+            <span class="compose-label">Re</span>
+            <input type="text" class="compose-input" id="compose-subject" placeholder="Subject (auto-generated if blank)" autocomplete="off" oninput="composeDraftAutoSave()" />
+        </div>
+
+        <div class="compose-section-label">Templates</div>
+        <div class="compose-chip-row" id="compose-chip-row"></div>
+
+        <div class="compose-section-label">Instructions</div>
+        <div class="compose-field-row" style="margin-bottom:12px;">
+            <span class="compose-label" style="padding-top:7px;">✏</span>
+            <input type="text" class="compose-input" id="compose-prompt" placeholder="Describe what this email should say, or pick a template above…" oninput="detectMeetingIntent(); composeDraftAutoSave()" />
+        </div>
+
+        <div class="compose-meeting-panel" id="compose-meeting-panel">
+            <div class="compose-meeting-title">📅 Meeting Proposal</div>
+            <div class="compose-meeting-row">
+                <span class="compose-meeting-label">Duration</span>
+                <select class="compose-select" id="compose-duration" onchange="composeDraftAutoSave()">
+                    <option value="30">30 min</option>
+                    <option value="45">45 min</option>
+                    <option value="60" selected>60 min</option>
+                    <option value="90">90 min</option>
+                    <option value="120">2 hours</option>
+                </select>
+                <span class="compose-meeting-label compose-meeting-label-spaced">From</span>
+                <input type="date" class="compose-select" id="compose-from-date" onchange="composeDraftAutoSave()" />
+                <button type="button" class="compose-find-slots-btn" id="compose-find-slots-btn" onclick="fetchComposeSlots()">⟳ Find Slots</button>
+            </div>
+            <div class="compose-slots-list">
+                <div class="compose-slot-row">
+                    <span class="compose-slot-num">1.</span>
+                    <input type="text" class="compose-slot-input" id="compose-slot-0" placeholder="Click 'Find Slots' or enter manually…" oninput="composeDraftAutoSave()" />
+                </div>
+                <div class="compose-slot-row">
+                    <span class="compose-slot-num">2.</span>
+                    <input type="text" class="compose-slot-input" id="compose-slot-1" placeholder="Optional second slot…" oninput="composeDraftAutoSave()" />
+                </div>
+                <div class="compose-slot-row">
+                    <span class="compose-slot-num">3.</span>
+                    <input type="text" class="compose-slot-input" id="compose-slot-2" placeholder="Optional third slot…" oninput="composeDraftAutoSave()" />
+                </div>
+            </div>
+            <div class="compose-invite-note">1 slot → calendar invite sent with email &nbsp;·&nbsp; 2–3 slots → times listed in email body only</div>
+        </div>
+
+        <div class="compose-section-label" id="compose-draft-label" style="display:none;">Draft</div>
+        <textarea class="compose-draft-area" id="compose-draft" placeholder="Draft will appear here after generation, or type directly…" oninput="composeDraftAutoSave()" style="display:none;"></textarea>
+
+        <div class="compose-context-chips" id="compose-context-chips"></div>
+
+        <div class="compose-btn-row">
+            <button type="button" class="compose-cancel-btn" onclick="closeCompose()">Cancel</button>
+            <button type="button" class="compose-generate-btn" id="compose-generate-btn" onclick="generateComposeDraft()">✏ Generate Draft</button>
+            <button type="button" class="compose-send-btn" id="compose-send-btn" onclick="sendCompose()">↑ Send</button>
         </div>
     </div>
 </div>
@@ -2292,6 +2645,326 @@
         document.getElementById('empty-state').style.display = 'flex';
         document.getElementById('email-detail').style.display = 'none';
         await loadQueue();
+    }
+
+    // ---- Compose ----
+
+    const COMPOSE_TEMPLATES = {
+        financial: [
+            { label: 'Meeting proposal', text: 'Propose a meeting to discuss their financial plan.' },
+            { label: 'Follow up', text: 'Follow up on our last meeting and check on their progress.' },
+            { label: 'Portfolio update', text: 'Send a portfolio performance update.' },
+            { label: 'Schedule review', text: 'Schedule an annual review meeting.' },
+        ],
+        gmail: [
+            { label: 'Meeting proposal', text: 'Propose a meeting to discuss their tax situation.' },
+            { label: 'Tax query', text: 'Respond to their tax question in detail.' },
+            { label: 'Lodgement update', text: 'Provide an update on their tax lodgement status.' },
+            { label: 'ATO correspondence', text: 'Assist with their ATO correspondence or notice.' },
+        ],
+        personal: [
+            { label: 'Meeting proposal', text: 'Propose a time to meet or catch up.' },
+            { label: 'Follow up', text: 'Follow up on a previous conversation.' },
+            { label: 'General', text: 'Write a general personal email.' },
+        ],
+    };
+
+    const MEETING_KEYWORDS = ['meeting','schedule','calendar','appointment','call','zoom','teams','availability','available','time slot','propose','catch up'];
+
+    let composeAccount = 'financial';
+    let composeToTimer = null;
+    let composeCcTimer = null;
+    let composeDraftSaveTimer = null;
+    let composeSlots = [];
+
+    function openCompose(preAccount) {
+        composeAccount = preAccount || 'financial';
+        document.getElementById('compose-overlay').classList.add('show');
+        const today = new Date().toISOString().split('T')[0];
+        document.getElementById('compose-from-date').value = today;
+        _activateComposeTab(composeAccount);
+        populateComposeTemplates(composeAccount);
+        _loadComposeDraftState(composeAccount);
+    }
+
+    function closeCompose() {
+        document.getElementById('compose-overlay').classList.remove('show');
+        _hideComposeAutocomplete('compose-to-ac');
+        _hideComposeAutocomplete('compose-cc-ac');
+    }
+
+    function switchComposeAccount(account) {
+        if (account === composeAccount) return;
+        _saveCurrentComposeDraftState();
+        composeAccount = account;
+        _activateComposeTab(account);
+        populateComposeTemplates(account);
+        _loadComposeDraftState(account);
+    }
+
+    function _activateComposeTab(account) {
+        ['financial','gmail','personal'].forEach(a => {
+            document.getElementById(`ctab-${a}`).classList.toggle('active', a === account);
+        });
+    }
+
+    function populateComposeTemplates(account) {
+        const chips = COMPOSE_TEMPLATES[account] || [];
+        const row = document.getElementById('compose-chip-row');
+        row.innerHTML = chips.map(c =>
+            `<button type="button" class="compose-chip" onclick="applyComposeTemplate(${JSON.stringify(c.text)})">${escHtml(c.label)}</button>`
+        ).join('');
+    }
+
+    function applyComposeTemplate(text) {
+        document.getElementById('compose-prompt').value = text;
+        detectMeetingIntent();
+        composeDraftAutoSave();
+    }
+
+    function detectMeetingIntent() {
+        const prompt = (document.getElementById('compose-prompt').value || '').toLowerCase();
+        const subject = (document.getElementById('compose-subject').value || '').toLowerCase();
+        const combined = prompt + ' ' + subject;
+        const isMeeting = MEETING_KEYWORDS.some(kw => combined.includes(kw));
+        document.getElementById('compose-meeting-panel').classList.toggle('show', isMeeting);
+    }
+
+    function composeContactInput(inputEl, acId) {
+        const isTo = inputEl.id === 'compose-to';
+        if (isTo) { if (composeToTimer) clearTimeout(composeToTimer); }
+        else { if (composeCcTimer) clearTimeout(composeCcTimer); }
+        const delay = setTimeout(async () => {
+            const q = inputEl.value.trim();
+            if (q.length < 2) { _hideComposeAutocomplete(acId); return; }
+            try {
+                const res = await fetch(`/api/contacts/search?q=${encodeURIComponent(q)}&account=${composeAccount}`);
+                const results = await res.json();
+                renderComposeAutocomplete(results, inputEl, acId);
+            } catch (e) { _hideComposeAutocomplete(acId); }
+        }, 300);
+        if (isTo) composeToTimer = delay; else composeCcTimer = delay;
+    }
+
+    function renderComposeAutocomplete(results, inputEl, acId) {
+        const ac = document.getElementById(acId);
+        if (!results || results.length === 0) { ac.style.display = 'none'; return; }
+        ac.innerHTML = results.map(r => {
+            const co = r.company ? `<span class="compose-autocomplete-company">${escHtml(r.company)}</span>` : '';
+            return `<div class="compose-autocomplete-item" onclick="selectComposeContact('${escAttr(r.name||r.email)}','${escAttr(r.email)}','${inputEl.id}','${acId}')">
+                <span class="compose-autocomplete-name">${escHtml(r.name||r.email)}</span>
+                <span class="compose-autocomplete-email">${escHtml(r.email)}</span>${co}
+            </div>`;
+        }).join('');
+        ac.style.display = 'block';
+    }
+
+    function selectComposeContact(name, email, inputId, acId) {
+        const val = name && name !== email ? `${name} <${email}>` : email;
+        document.getElementById(inputId).value = val;
+        _hideComposeAutocomplete(acId);
+        composeDraftAutoSave();
+    }
+
+    function _hideComposeAutocomplete(acId) {
+        const ac = document.getElementById(acId);
+        if (ac) ac.style.display = 'none';
+    }
+
+    async function fetchComposeSlots() {
+        const btn = document.getElementById('compose-find-slots-btn');
+        const duration = document.getElementById('compose-duration').value;
+        const fromDate = document.getElementById('compose-from-date').value;
+        if (btn) { btn.textContent = '⟳ Finding…'; btn.disabled = true; }
+        try {
+            const params = new URLSearchParams({ account: composeAccount, duration });
+            if (fromDate) params.set('from_date', fromDate);
+            const res = await fetch(`/api/calendar/free-slots?${params}`);
+            const data = await res.json();
+            composeSlots = data.slots || [];
+            for (let i = 0; i < 3; i++) {
+                const slot = composeSlots[i];
+                const input = document.getElementById(`compose-slot-${i}`);
+                if (!input) continue;
+                input.value = slot ? `${_fmtSlotDt(new Date(slot.start))} – ${_fmtSlotTime(new Date(slot.end))}` : '';
+            }
+            composeDraftAutoSave();
+        } catch (e) {
+            showToast('Failed to find slots — check server');
+        } finally {
+            if (btn) { btn.textContent = '⟳ Find Slots'; btn.disabled = false; }
+        }
+    }
+
+    function _fmtSlotDt(dt) {
+        return dt.toLocaleString('en-AU', { weekday:'short', month:'short', day:'numeric', hour:'numeric', minute:'2-digit', hour12:true });
+    }
+    function _fmtSlotTime(dt) {
+        return dt.toLocaleString('en-AU', { hour:'numeric', minute:'2-digit', hour12:true });
+    }
+
+    function composeDraftAutoSave() {
+        if (composeDraftSaveTimer) clearTimeout(composeDraftSaveTimer);
+        composeDraftSaveTimer = setTimeout(_saveCurrentComposeDraftState, 1200);
+    }
+
+    async function _saveCurrentComposeDraftState() {
+        if (composeDraftSaveTimer) { clearTimeout(composeDraftSaveTimer); composeDraftSaveTimer = null; }
+        try {
+            await fetch('/api/compose/draft-state', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    account: composeAccount,
+                    to_address: document.getElementById('compose-to').value,
+                    cc_address: document.getElementById('compose-cc').value,
+                    subject: document.getElementById('compose-subject').value,
+                    body: document.getElementById('compose-draft').value,
+                    prompt: document.getElementById('compose-prompt').value,
+                }),
+            });
+        } catch(e) {}
+    }
+
+    async function _loadComposeDraftState(account) {
+        ['compose-to','compose-cc','compose-subject','compose-prompt'].forEach(id => {
+            document.getElementById(id).value = '';
+        });
+        const draftEl = document.getElementById('compose-draft');
+        draftEl.value = '';
+        draftEl.style.display = 'none';
+        document.getElementById('compose-draft-label').style.display = 'none';
+        document.getElementById('compose-context-chips').innerHTML = '';
+        document.getElementById('compose-meeting-panel').classList.remove('show');
+        for (let i = 0; i < 3; i++) {
+            const el = document.getElementById(`compose-slot-${i}`);
+            if (el) el.value = '';
+        }
+        composeSlots = [];
+        try {
+            const res = await fetch(`/api/compose/draft-state?account=${account}`);
+            const data = await res.json();
+            if (data.to_address) document.getElementById('compose-to').value = data.to_address;
+            if (data.cc_address) document.getElementById('compose-cc').value = data.cc_address;
+            if (data.subject) document.getElementById('compose-subject').value = data.subject;
+            if (data.prompt) document.getElementById('compose-prompt').value = data.prompt;
+            if (data.body) {
+                draftEl.value = data.body;
+                draftEl.style.display = '';
+                document.getElementById('compose-draft-label').style.display = '';
+            }
+            detectMeetingIntent();
+        } catch(e) {}
+    }
+
+    async function generateComposeDraft() {
+        const toRaw = document.getElementById('compose-to').value.trim();
+        const btn = document.getElementById('compose-generate-btn');
+        const draftEl = document.getElementById('compose-draft');
+        btn.disabled = true;
+        btn.textContent = '✏ Generating…';
+        draftEl.style.display = '';
+        document.getElementById('compose-draft-label').style.display = '';
+        draftEl.value = '';
+        draftEl.classList.add('generating');
+        draftEl.placeholder = 'Generating…';
+
+        const slots = [];
+        for (let i = 0; i < 3; i++) {
+            const v = (document.getElementById(`compose-slot-${i}`)?.value || '').trim();
+            if (v) slots.push(v);
+        }
+        try {
+            const res = await fetch('/api/compose/draft', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    account: composeAccount,
+                    to: toRaw,
+                    to_email: _extractEmail(toRaw),
+                    cc: document.getElementById('compose-cc').value.trim(),
+                    subject: document.getElementById('compose-subject').value.trim(),
+                    prompt: document.getElementById('compose-prompt').value.trim(),
+                    meeting_slots: slots,
+                    duration_minutes: parseInt(document.getElementById('compose-duration').value) || 60,
+                }),
+            });
+            const data = await res.json();
+            if (data.draft) {
+                draftEl.value = data.draft;
+                if (data.subject && !document.getElementById('compose-subject').value) {
+                    document.getElementById('compose-subject').value = data.subject;
+                }
+                const chipsEl = document.getElementById('compose-context-chips');
+                chipsEl.innerHTML = (data.context_sources || []).map(s =>
+                    `<span class="compose-context-chip">${escHtml(s)}</span>`
+                ).join('');
+                composeDraftAutoSave();
+            } else {
+                showToast(`Draft failed: ${data.error || 'unknown'}`);
+            }
+        } catch(e) {
+            showToast('Draft generation failed — check server logs');
+        } finally {
+            draftEl.classList.remove('generating');
+            draftEl.placeholder = 'Draft will appear here after generation, or type directly…';
+            btn.disabled = false;
+            btn.textContent = '✏ Generate Draft';
+        }
+    }
+
+    async function sendCompose() {
+        const toRaw = document.getElementById('compose-to').value.trim();
+        const subject = document.getElementById('compose-subject').value.trim();
+        const body = document.getElementById('compose-draft').value.trim();
+        if (!toRaw) { showToast('Add a recipient first'); return; }
+        if (!subject) { showToast('Subject is required'); return; }
+        if (!body) { showToast('Draft is empty — generate or type a draft first'); return; }
+
+        const btn = document.getElementById('compose-send-btn');
+        btn.disabled = true;
+        btn.textContent = '↑ Sending…';
+
+        const rawSlots = [];
+        for (let i = 0; i < 3; i++) {
+            const v = (document.getElementById(`compose-slot-${i}`)?.value || '').trim();
+            if (v) rawSlots.push({ label: v, raw: composeSlots[i] || null });
+        }
+        const hasMeeting = document.getElementById('compose-meeting-panel').classList.contains('show') && rawSlots.length > 0;
+        try {
+            const res = await fetch('/api/compose/send', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    account: composeAccount,
+                    to: toRaw,
+                    to_email: _extractEmail(toRaw),
+                    cc: document.getElementById('compose-cc').value.trim(),
+                    subject,
+                    body,
+                    meeting_slots: hasMeeting ? rawSlots : [],
+                    duration_minutes: parseInt(document.getElementById('compose-duration').value) || 60,
+                }),
+            });
+            const data = await res.json();
+            if (data.ok) {
+                showToast(`✓ Sent${hasMeeting ? ' with meeting proposal' : ''}`);
+                closeCompose();
+                await loadQueue();
+            } else {
+                showToast(`Send failed: ${data.error || 'unknown'}`);
+            }
+        } catch(e) {
+            showToast('Send failed — check server logs');
+        } finally {
+            btn.disabled = false;
+            btn.textContent = '↑ Send';
+        }
+    }
+
+    function _extractEmail(str) {
+        const m = str.match(/<([^>]+)>/);
+        return m ? m[1].trim() : str.trim();
     }
 
     // ---- File picker ----

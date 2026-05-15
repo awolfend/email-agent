@@ -100,6 +100,13 @@ Body:
 
 Draft the reply now. Write only the email body.{guidance_block}"""
 
+COMPOSE_SUFFIX = """\n\n{crm_block}Compose a new outgoing email (not a reply).
+
+Recipient: {to}
+User instructions: {prompt}{meeting_block}
+
+Write only the email body. Do not include a subject line. Do not include a signature block — it is added automatically.{subject_line}"""
+
 VOICE_PROFILE_BLOCK = f"""Style profile derived from {_AUTHOR_FIRST}'s own sent emails — follow this in addition to the instructions above:
 
 {{profile}}
@@ -222,3 +229,89 @@ async def generate_draft(account: str, sender: str, subject: str, body: str,
     if footer:
         draft = draft + "\n\n" + footer
     return draft
+
+
+async def generate_compose_draft(
+    account: str,
+    to: str,
+    subject: str = "",
+    prompt: str = "",
+    crm_context: str = "",
+    meeting_slots: list[str] = None,
+    duration_minutes: int = 60,
+) -> tuple[str, str]:
+    """
+    Generate a new outgoing email (not a reply).
+    Returns (draft_body, subject_line).
+    If subject is blank, Claude is asked to generate one embedded in the response.
+    """
+    voice_block = await _get_voice_block(account)
+    base_prompt = await _get_base_prompt(account)
+    crm_block = crm_context.strip() + "\n\n" if crm_context.strip() else ""
+
+    # Strip the "do not include a subject line" rule from base prompt for compose
+    stripped_base = base_prompt.replace(
+        "- Do not include a subject line.", ""
+    ).rstrip()
+
+    # Build meeting block
+    meeting_block = ""
+    if meeting_slots:
+        lines = [f"\n\nMeeting proposal — duration: {duration_minutes} minutes"]
+        if len(meeting_slots) == 1:
+            lines.append(f"Proposed time: {meeting_slots[0]}")
+            lines.append("Present this single time in the email body. Mention that a calendar invite will follow once confirmed.")
+        else:
+            lines.append("Proposed times (list these in the email body and ask the client to confirm which suits):")
+            for i, s in enumerate(meeting_slots, 1):
+                lines.append(f"  {i}. {s}")
+        meeting_block = "\n".join(lines)
+
+    # Subject generation — ask Claude to append it if blank
+    need_subject = not subject.strip()
+    subject_line = ""
+    if need_subject:
+        subject_line = '\n\nAfter the email body, on a new line write exactly:\nSUBJECT: <concise subject of 6 words or fewer>'
+
+    full_prompt = stripped_base + COMPOSE_SUFFIX.format(
+        crm_block=crm_block,
+        to=to,
+        prompt=prompt or "Write a professional email.",
+        meeting_block=meeting_block,
+        subject_line=subject_line,
+    )
+    if voice_block:
+        full_prompt = voice_block + "\n" + full_prompt
+
+    raw = ""
+    try:
+        raw = await _call_claude(full_prompt)
+        logger.info(f"Compose draft generated via Claude for: {to[:50]}")
+    except Exception as e:
+        logger.warning(f"Claude failed for compose ({e}), trying OpenAI fallback")
+        try:
+            raw = await _call_openai(full_prompt)
+            logger.info(f"Compose draft generated via OpenAI for: {to[:50]}")
+        except Exception as e2:
+            logger.error(f"OpenAI compose fallback also failed: {e2}")
+            return "", ""
+
+    # Parse subject from tail if we asked for one
+    parsed_subject = subject.strip()
+    body = raw
+    if need_subject:
+        if "\nSUBJECT:" in raw:
+            parts = raw.rsplit("\nSUBJECT:", 1)
+            body = parts[0].strip()
+            parsed_subject = parts[1].strip()
+        elif raw.upper().startswith("SUBJECT:"):
+            first_newline = raw.find("\n")
+            if first_newline != -1:
+                parsed_subject = raw[8:first_newline].strip()
+                body = raw[first_newline:].strip()
+
+    footer = await _get_footer(account)
+    if footer:
+        body = body + "\n\n" + footer
+
+    return body, parsed_subject

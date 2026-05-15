@@ -565,6 +565,53 @@ async def get_busy_windows(account: str, start_dt: datetime, end_dt: datetime) -
         return []
 
 
+async def create_calendar_hold(account: str, start_iso: str, end_iso: str, title: str = "Hold") -> str:
+    """
+    Create a tentative calendar hold with no client-identifiable details.
+    Returns the Graph event id, or "" on failure.
+    """
+    try:
+        from zoneinfo import ZoneInfo
+        token = await get_valid_token(account)
+        base  = _mailbox_base(account)
+        # Parse ISO strings to UTC-aware datetimes then format for Graph
+        s_dt = datetime.fromisoformat(start_iso).astimezone(timezone.utc)
+        e_dt = datetime.fromisoformat(end_iso).astimezone(timezone.utc)
+        body_payload = {
+            "subject": title,
+            "showAs": "tentative",
+            "isAllDay": False,
+            "start": {"dateTime": s_dt.strftime("%Y-%m-%dT%H:%M:%S"), "timeZone": "UTC"},
+            "end":   {"dateTime": e_dt.strftime("%Y-%m-%dT%H:%M:%S"), "timeZone": "UTC"},
+        }
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            resp = await client.post(
+                f"{base}/calendar/events",
+                headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+                json=body_payload,
+            )
+            resp.raise_for_status()
+            return resp.json().get("id", "")
+    except Exception as e:
+        logger.warning(f"create_calendar_hold failed ({account}): {e}")
+        return ""
+
+
+async def delete_calendar_event(account: str, event_id: str) -> bool:
+    """Delete a calendar event by its Graph event id. Returns True on success."""
+    try:
+        token = await get_valid_token(account)
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            resp = await client.delete(
+                f"{_mailbox_base(account)}/calendar/events/{event_id}",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            return resp.status_code in (200, 204)
+    except Exception as e:
+        logger.warning(f"delete_calendar_event failed ({account}): {e}")
+        return False
+
+
 async def move_email(account: str, email_id: str, folder_name: str):
     folder_id = await get_or_create_folder(account, folder_name)
     token = await get_valid_token(account)

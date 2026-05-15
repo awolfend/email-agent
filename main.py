@@ -1,6 +1,6 @@
 import asyncio
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from fastapi import FastAPI, Request
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
@@ -58,13 +58,26 @@ from db.database import (
     delete_sender_rule, clear_all_sender_rules,
     search_contact_history,
     save_compose_draft, get_compose_draft, clear_compose_draft,
+    log_action,
+    save_meeting_proposal, save_meeting_slot,
 )
 from agent.poller import start_scheduler, poll_all
-from agent.drafter import generate_draft
+from agent.drafter import generate_draft, generate_compose_draft
 from agent.learner import build_voice_profiles
 from connectors.hubspot import get_contact_context as hubspot_context, search_contacts as hubspot_search_contacts
-from connectors.graph import get_email_history as graph_email_history, search_contacts as graph_search_contacts, get_busy_windows as graph_get_busy_windows
-from connectors.gmail import get_email_history as gmail_email_history, get_busy_windows as gmail_get_busy_windows
+from connectors.graph import (
+    get_email_history as graph_email_history,
+    search_contacts as graph_search_contacts,
+    get_busy_windows as graph_get_busy_windows,
+    create_calendar_hold as graph_create_hold,
+    delete_calendar_event as graph_delete_event,
+)
+from connectors.gmail import (
+    get_email_history as gmail_email_history,
+    get_busy_windows as gmail_get_busy_windows,
+    create_calendar_hold as gmail_create_hold,
+    delete_calendar_event as gmail_delete_event,
+)
 
 load_dotenv("config/.env")
 
@@ -124,6 +137,16 @@ class FileRequest(BaseModel):
     target_account: str
     folder_id: str
     folder_name: str
+
+class ComposeDraftRequest(BaseModel):
+    account: str = "financial"
+    to: str = ""
+    to_email: str = ""
+    cc: str = ""
+    subject: str = ""
+    prompt: str = ""
+    meeting_slots: list[str] = []
+    duration_minutes: int = 60
 
 
 @app.get("/")
@@ -419,6 +442,218 @@ async def api_save_compose_draft(request: Request):
         prompt=body.get("prompt"),
     )
     return {"ok": True}
+
+
+@app.post("/api/compose/draft")
+async def api_compose_draft(body: ComposeDraftRequest):
+    """
+    Generate a new outgoing email draft (not a reply).
+    Assembles CRM + email history context, then calls Claude/OpenAI.
+    Returns { draft, subject, context_sources }.
+    """
+    account   = body.account
+    to_email  = body.to_email.strip() or body.to.strip()
+    to_display = body.to.strip() or to_email
+
+    context_parts: list[str] = []
+    context_sources: list[str] = []
+
+    if to_email:
+        if account == "financial":
+            hs_ctx, email_history = await asyncio.gather(
+                hubspot_context(to_email),
+                graph_email_history("financial", to_email, limit=6),
+            )
+        elif account == "personal":
+            hs_ctx        = ""
+            email_history = await graph_email_history("personal", to_email, limit=6)
+        else:  # gmail
+            hs_ctx        = ""
+            email_history = await gmail_email_history(to_email, limit=6)
+
+        if hs_ctx:
+            context_parts.append(hs_ctx)
+            context_sources.append("HubSpot CRM")
+        if email_history:
+            lines = ["--- Email history ---"]
+            for msg in email_history:
+                subj    = msg["subject"] or "(no subject)"
+                snippet = f" — {msg['snippet']}" if msg["snippet"] else ""
+                lines.append(f"  [{msg['date']}] {msg['direction']} {subj}{snippet}")
+            lines.append("--- end email history ---")
+            context_parts.append("\n".join(lines))
+            context_sources.append(f"Email history ({len(email_history)} msgs)")
+    else:
+        hs_ctx        = ""
+        email_history = []
+
+    crm_context = "\n\n".join(context_parts)
+
+    draft, subject = await generate_compose_draft(
+        account=account,
+        to=to_display,
+        subject=body.subject,
+        prompt=body.prompt,
+        crm_context=crm_context,
+        meeting_slots=body.meeting_slots or [],
+        duration_minutes=body.duration_minutes,
+    )
+
+    if not draft:
+        return JSONResponse({"error": "Draft generation failed — check server logs"}, status_code=500)
+
+    # Persist the generated draft so switching accounts doesn't lose it
+    await save_compose_draft(
+        account=account,
+        to_address=body.to,
+        cc_address=body.cc,
+        subject=subject or body.subject,
+        body=draft,
+        prompt=body.prompt,
+    )
+
+    return JSONResponse({
+        "draft": draft,
+        "subject": subject,
+        "context_sources": context_sources,
+    })
+
+
+class ComposeSendRequest(BaseModel):
+    account: str = "financial"
+    to: str = ""
+    to_email: str = ""
+    cc: str = ""
+    subject: str
+    body: str
+    meeting_slots: list[dict] = []   # [{label: str, raw: {start, end} | None}]
+    duration_minutes: int = 60
+
+
+@app.post("/api/compose/send")
+async def api_compose_send(body: ComposeSendRequest):
+    """
+    Send a composed email, create tentative calendar holds for any meeting slots,
+    log to action_log, and clear the saved draft.
+    """
+    account  = body.account
+    to_raw   = body.to.strip()
+    to_email = body.to_email.strip() or to_raw
+    recipients = extract_email_addresses(to_raw) or extract_email_addresses(to_email)
+    if not recipients:
+        return JSONResponse({"ok": False, "error": "No valid recipient address"}, status_code=400)
+    if not body.subject.strip():
+        return JSONResponse({"ok": False, "error": "Subject is required"}, status_code=400)
+    if not body.body.strip():
+        return JSONResponse({"ok": False, "error": "Body is empty"}, status_code=400)
+
+    sent_at = datetime.now(timezone.utc)
+
+    # ---- Send email ----
+    try:
+        if account in ("financial", "personal"):
+            filing_cc = os.getenv("FILING_EMAIL_FINANCIAL")
+            cc_list = []
+            if account == "financial" and filing_cc:
+                cc_list.append(filing_cc)
+            if body.cc.strip():
+                cc_list.extend(extract_email_addresses(body.cc))
+            await graph_send_email(account, recipients, body.subject, body.body,
+                                   cc=cc_list or None)
+        elif account == "gmail":
+            to_str = ", ".join(recipients)
+            cc_str = body.cc.strip() or None
+            await gmail_send_email(to_str, body.subject, body.body,
+                                   cc=cc_str)
+        else:
+            return JSONResponse({"ok": False, "error": f"Unknown account: {account}"}, status_code=400)
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": f"Send failed: {e}"}, status_code=500)
+
+    # ---- Log to action_log so it appears in History > Sent ----
+    import uuid
+    compose_id = f"compose-{uuid.uuid4().hex[:16]}"
+    await log_action(
+        account=account,
+        email_id=compose_id,
+        subject=body.subject,
+        sender=to_raw,           # store recipient as "sender" field so history shows who it was sent to
+        action="sent_compose",
+        body=body.body[:2000],
+    )
+    await update_email_status(compose_id, "sent", "sent_compose")
+
+    # ---- Calendar holds for meeting slots ----
+    proposal_id = None
+    valid_slots = [s for s in body.meeting_slots if s.get("raw") and s["raw"].get("start") and s["raw"].get("end")]
+
+    if valid_slots:
+        no_response_hours = int(await get_setting("meeting_no_response_hours") or "36")
+        post_slot_buffer  = int(await get_setting("meeting_post_slot_buffer_minutes") or "30")
+        no_response_deadline = sent_at + timedelta(hours=no_response_hours)
+
+        proposal_id = await save_meeting_proposal(
+            outgoing_message_id=compose_id,
+            account=account,
+            client_email=to_email,
+            client_name=to_raw,
+            subject=body.subject,
+            duration_minutes=body.duration_minutes,
+            sent_at=sent_at.isoformat(),
+        )
+
+        for slot in valid_slots:
+            raw   = slot["raw"]
+            s_iso = raw["start"]
+            e_iso = raw["end"]
+            try:
+                s_dt = datetime.fromisoformat(s_iso)
+                e_dt = datetime.fromisoformat(e_iso)
+            except ValueError:
+                continue
+
+            # Auto-release = earliest of (slot_end + buffer) and (sent + 36h)
+            slot_deadline = e_dt.astimezone(timezone.utc) + timedelta(minutes=post_slot_buffer)
+            auto_release  = min(slot_deadline, no_response_deadline).isoformat()
+
+            # Create owning event + mirrors in parallel
+            own_id = fin_mirror = tax_mirror = ""
+            if account == "financial":
+                own_id, tax_mirror = await asyncio.gather(
+                    graph_create_hold("financial", s_iso, e_iso),
+                    gmail_create_hold(s_iso, e_iso),
+                )
+            elif account == "gmail":
+                tax_mirror, fin_mirror = await asyncio.gather(
+                    gmail_create_hold(s_iso, e_iso),
+                    graph_create_hold("financial", s_iso, e_iso),
+                )
+                own_id = tax_mirror
+                tax_mirror = ""   # own_id IS the google event; fin_mirror is the M365 mirror
+            elif account == "personal":
+                own_id, fin_mirror, tax_mirror = await asyncio.gather(
+                    graph_create_hold("personal", s_iso, e_iso),
+                    graph_create_hold("financial", s_iso, e_iso),
+                    gmail_create_hold(s_iso, e_iso),
+                )
+
+            await save_meeting_slot(
+                proposal_id=proposal_id,
+                slot_start=s_iso,
+                slot_end=e_iso,
+                auto_release_at=auto_release,
+                owning_calendar_event_id=own_id or None,
+                mirror_event_id_financial=fin_mirror or None,
+                mirror_event_id_google_tax=tax_mirror or None,
+            )
+
+    # ---- Clear compose draft ----
+    await clear_compose_draft(account)
+
+    return JSONResponse({
+        "ok": True,
+        **({"proposal_id": proposal_id} if proposal_id else {}),
+    })
 
 
 def _find_free_slots(
