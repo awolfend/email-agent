@@ -44,9 +44,8 @@ def _mailbox_base(account: str) -> str:
 _APP_BASE_URL = os.getenv("APP_BASE_URL", "http://localhost:8000").rstrip("/")
 
 
-def get_auth_url(account: str, base_url: str = None) -> str:
-    base = base_url or _APP_BASE_URL
-    redirect_uri = f"{base}/auth/callback/{account}"
+def get_auth_url(account: str) -> str:
+    redirect_uri = f"{_APP_BASE_URL}/auth/callback/{account}"
     return (
         f"{AUTHORITY}/oauth2/v2.0/authorize"
         f"?client_id={CLIENT_ID}"
@@ -59,9 +58,8 @@ def get_auth_url(account: str, base_url: str = None) -> str:
     )
 
 
-async def exchange_code_for_token(code: str, account: str, base_url: str = None) -> dict:
-    base = base_url or _APP_BASE_URL
-    redirect_uri = f"{base}/auth/callback/{account}"
+async def exchange_code_for_token(code: str, account: str) -> dict:
+    redirect_uri = f"{_APP_BASE_URL}/auth/callback/{account}"
     async with httpx.AsyncClient() as client:
         response = await client.post(
             f"{AUTHORITY}/oauth2/v2.0/token",

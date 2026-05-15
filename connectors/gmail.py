@@ -44,11 +44,10 @@ def save_tokens(tokens: dict):
         json.dump(tokens, f, indent=2)
 
 
-def get_auth_url(base_url: str = None) -> str:
-    redirect_uri = f"{base_url}/auth/callback/gmail" if base_url else REDIRECT_URI
+def get_auth_url() -> str:
     params = (
         f"?client_id={CLIENT_ID}"
-        f"&redirect_uri={redirect_uri}"
+        f"&redirect_uri={REDIRECT_URI}"
         f"&response_type=code"
         f"&scope={SCOPES.replace(' ', '%20')}"
         f"&access_type=offline"
@@ -64,8 +63,7 @@ def _parse_expires_at(expires_str: str) -> datetime:
     return dt
 
 
-async def exchange_code_for_token(code: str, base_url: str = None) -> dict:
-    redirect_uri = f"{base_url}/auth/callback/gmail" if base_url else REDIRECT_URI
+async def exchange_code_for_token(code: str) -> dict:
     async with httpx.AsyncClient() as client:
         response = await client.post(
             TOKEN_URL,
@@ -73,7 +71,7 @@ async def exchange_code_for_token(code: str, base_url: str = None) -> dict:
                 "client_id": CLIENT_ID,
                 "client_secret": CLIENT_SECRET,
                 "code": code,
-                "redirect_uri": redirect_uri,
+                "redirect_uri": REDIRECT_URI,
                 "grant_type": "authorization_code",
             },
         )

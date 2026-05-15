@@ -1110,12 +1110,11 @@ async def api_build_voice():
     return {"ok": True}
 
 @app.get("/auth/login/{account}")
-async def login(account: str, request: Request):
-    base_url = str(request.base_url).rstrip("/")
+async def login(account: str):
     if account == "gmail":
-        return RedirectResponse(gmail_auth_url(base_url=base_url))
+        return RedirectResponse(gmail_auth_url())
     if account == "financial":
-        return RedirectResponse(graph_auth_url(account, base_url=base_url))
+        return RedirectResponse(graph_auth_url(account))
     if account == "personal":
         # Personal uses application credentials — no OAuth flow required
         return RedirectResponse("/auth/test/personal")
@@ -1126,8 +1125,7 @@ async def gmail_callback(request: Request):
     code = request.query_params.get("code")
     if not code:
         return HTMLResponse("No code returned from Google", status_code=400)
-    base_url = str(request.base_url).rstrip("/")
-    await gmail_exchange(code, base_url=base_url)
+    await gmail_exchange(code)
     return RedirectResponse("/auth/test/gmail")
 
 @app.get("/auth/callback/{account}")
@@ -1135,8 +1133,7 @@ async def graph_callback(account: str, request: Request):
     code = request.query_params.get("code")
     if not code:
         return HTMLResponse("No code returned from Microsoft", status_code=400)
-    base_url = str(request.base_url).rstrip("/")
-    await graph_exchange(code, account, base_url=base_url)
+    await graph_exchange(code, account)
     return RedirectResponse(f"/auth/test/{account}")
 
 @app.get("/auth/test/gmail")
