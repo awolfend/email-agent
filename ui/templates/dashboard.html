@@ -451,6 +451,7 @@
             white-space: nowrap;
             font-weight: 600;
         }
+        #draft-to-bar { position: relative; }
         #draft-to-input {
             flex: 1;
             background: transparent;
@@ -503,6 +504,7 @@
         #draft-guidance-input::placeholder { color: var(--text-dimmer); }
 
         #followup-to-bar {
+            position: relative;
             display: none;
             padding: 6px 20px;
             border-bottom: 1px solid var(--border);
@@ -747,6 +749,19 @@
         .compose-autocomplete-name { color: var(--text); font-weight: 500; }
         .compose-autocomplete-email { color: var(--text-dimmer); font-size: 11px; }
         .compose-autocomplete-company { color: var(--text-dimmer); font-size: 10px; }
+        .reply-autocomplete {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            background: var(--surface2);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            z-index: 310;
+            max-height: 180px;
+            overflow-y: auto;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+        }
         .compose-chip-row {
             display: flex;
             flex-wrap: wrap;
@@ -1456,7 +1471,10 @@
 
         <div id="followup-to-bar">
             <label>To:</label>
-            <input type="text" id="followup-to-input" placeholder="recipient@example.com" />
+            <input type="text" id="followup-to-input" placeholder="recipient@example.com"
+                oninput="replyContactInput(this,'followup-to-ac')"
+                onblur="setTimeout(()=>_hideReplyAc('followup-to-ac'),200)" />
+            <div class="reply-autocomplete" id="followup-to-ac" style="display:none;"></div>
         </div>
 
         <div id="action-bar"></div>
@@ -1483,7 +1501,10 @@
                 </div>
                 <div id="draft-to-bar">
                     <label>To:</label>
-                    <input type="text" id="draft-to-input" placeholder="recipient@example.com" />
+                    <input type="text" id="draft-to-input" placeholder="recipient@example.com"
+                        oninput="replyContactInput(this,'draft-to-ac')"
+                        onblur="setTimeout(()=>_hideReplyAc('draft-to-ac'),200)" />
+                    <div class="reply-autocomplete" id="draft-to-ac" style="display:none;"></div>
                 </div>
                 <textarea id="draft-reply" placeholder="Click 'Generate Draft' or type your own reply..."></textarea>
                 <div id="draft-guidance-bar">
@@ -2171,6 +2192,8 @@
         document.getElementById('email-body-section').scrollTop = 0;
         document.getElementById('stub-notice').style.display = email.stub ? 'block' : 'none';
 
+        _hideReplyAc('draft-to-ac');
+        _hideReplyAc('followup-to-ac');
         const draftSection = document.getElementById('draft-section');
         const resizerV = document.getElementById('resizer-v');
         if ((email.classification === 'action_required' || email.classification === 'meeting_response') && currentMode === 'inbox') {
@@ -3052,6 +3075,48 @@
     }
 
     function _hideComposeAutocomplete(acId) {
+        const ac = document.getElementById(acId);
+        if (ac) ac.style.display = 'none';
+    }
+
+    // ---- Reply / followup contact autocomplete ----
+
+    let _replyAcTimer = null;
+
+    function replyContactInput(inputEl, acId) {
+        if (_replyAcTimer) clearTimeout(_replyAcTimer);
+        _replyAcTimer = setTimeout(async () => {
+            const q = inputEl.value.trim();
+            if (q.length < 2) { _hideReplyAc(acId); return; }
+            const account = currentEmail?.account || 'financial';
+            try {
+                const res = await fetch(`/api/contacts/search?q=${encodeURIComponent(q)}&account=${encodeURIComponent(account)}`);
+                const results = await res.json();
+                _renderReplyAc(results, inputEl, acId);
+            } catch (e) { _hideReplyAc(acId); }
+        }, 300);
+    }
+
+    function _renderReplyAc(results, inputEl, acId) {
+        const ac = document.getElementById(acId);
+        if (!results || results.length === 0) { ac.style.display = 'none'; return; }
+        ac.innerHTML = results.map(r => {
+            const co = r.company ? `<span class="compose-autocomplete-company">${escHtml(r.company)}</span>` : '';
+            return `<div class="compose-autocomplete-item" onclick="_selectReplyContact('${escAttr(r.name||r.email)}','${escAttr(r.email)}','${inputEl.id}','${acId}')">
+                <span class="compose-autocomplete-name">${escHtml(r.name||r.email)}</span>
+                <span class="compose-autocomplete-email">${escHtml(r.email)}</span>${co}
+            </div>`;
+        }).join('');
+        ac.style.display = 'block';
+    }
+
+    function _selectReplyContact(name, email, inputId, acId) {
+        const val = name && name !== email ? `${name} <${email}>` : email;
+        document.getElementById(inputId).value = val;
+        _hideReplyAc(acId);
+    }
+
+    function _hideReplyAc(acId) {
         const ac = document.getElementById(acId);
         if (ac) ac.style.display = 'none';
     }
