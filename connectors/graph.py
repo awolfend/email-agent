@@ -505,6 +505,66 @@ async def decline_calendar_event(account: str, email_id: str):
         response.raise_for_status()
 
 
+def _parse_graph_dt(dt_str: str, tz_str: str = "UTC") -> datetime | None:
+    """Parse a Graph API dateTime string to a UTC-aware datetime."""
+    if not dt_str:
+        return None
+    try:
+        s = re.sub(r'\.\d+', '', dt_str).replace('Z', '+00:00')
+        if '+' in s[10:] or s.endswith('+00:00'):
+            dt = datetime.fromisoformat(s)
+        else:
+            from zoneinfo import ZoneInfo
+            try:
+                dt = datetime.fromisoformat(s).replace(tzinfo=ZoneInfo(tz_str or "UTC"))
+            except Exception:
+                dt = datetime.fromisoformat(s).replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+    except Exception:
+        return None
+
+
+async def get_busy_windows(account: str, start_dt: datetime, end_dt: datetime) -> list[tuple]:
+    """
+    Return (start, end) UTC datetime tuples for all non-free, non-cancelled events
+    in the given window. Follows @odata.nextLink for pagination.
+    Fails silently — returns [] on any error.
+    """
+    try:
+        token = await get_valid_token(account)
+        base  = _mailbox_base(account)
+        url   = f"{base}/calendarView"
+        params = {
+            "startDateTime": start_dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "endDateTime":   end_dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "$select": "start,end,showAs,isCancelled",
+            "$top": 100,
+        }
+        busy = []
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            while url:
+                resp = await client.get(url, headers={"Authorization": f"Bearer {token}"}, params=params)
+                resp.raise_for_status()
+                data = resp.json()
+                for ev in data.get("value", []):
+                    if ev.get("isCancelled"):
+                        continue
+                    if ev.get("showAs", "busy") == "free":
+                        continue
+                    s = ev.get("start", {})
+                    e = ev.get("end", {})
+                    s_dt = _parse_graph_dt(s.get("dateTime"), s.get("timeZone"))
+                    e_dt = _parse_graph_dt(e.get("dateTime"), e.get("timeZone"))
+                    if s_dt and e_dt:
+                        busy.append((s_dt, e_dt))
+                url = data.get("@odata.nextLink")
+                params = {}
+        return busy
+    except Exception as e:
+        logger.debug(f"get_busy_windows failed ({account}): {e}")
+        return []
+
+
 async def move_email(account: str, email_id: str, folder_name: str):
     folder_id = await get_or_create_folder(account, folder_name)
     token = await get_valid_token(account)

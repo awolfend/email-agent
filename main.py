@@ -1,5 +1,6 @@
 import asyncio
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta
 from fastapi import FastAPI, Request
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
@@ -62,8 +63,8 @@ from agent.poller import start_scheduler, poll_all
 from agent.drafter import generate_draft
 from agent.learner import build_voice_profiles
 from connectors.hubspot import get_contact_context as hubspot_context, search_contacts as hubspot_search_contacts
-from connectors.graph import get_email_history as graph_email_history, search_contacts as graph_search_contacts
-from connectors.gmail import get_email_history as gmail_email_history
+from connectors.graph import get_email_history as graph_email_history, search_contacts as graph_search_contacts, get_busy_windows as graph_get_busy_windows
+from connectors.gmail import get_email_history as gmail_email_history, get_busy_windows as gmail_get_busy_windows
 
 load_dotenv("config/.env")
 
@@ -418,6 +419,140 @@ async def api_save_compose_draft(request: Request):
         prompt=body.get("prompt"),
     )
     return {"ok": True}
+
+
+def _find_free_slots(
+    busy_windows: list,
+    biz_start_str: str,
+    biz_end_str: str,
+    duration_min: int,
+    buffer_min: int,
+    from_date: str = None,
+    num_slots: int = 3,
+    max_days: int = 14,
+) -> list[dict]:
+    """
+    Walk business hours across up to max_days weekdays and return up to num_slots
+    free windows of duration_min minutes, with buffer_min gaps around busy blocks.
+    All busy_windows must be UTC-aware (datetime, datetime) tuples.
+    Returned slots are ISO strings in Australia/Brisbane time.
+    """
+    from zoneinfo import ZoneInfo
+    from datetime import date as date_type
+    BRISBANE = ZoneInfo("Australia/Brisbane")
+
+    duration = timedelta(minutes=duration_min)
+    buffer   = timedelta(minutes=buffer_min)
+
+    bh_start = tuple(int(x) for x in biz_start_str.split(":"))
+    bh_end   = tuple(int(x) for x in biz_end_str.split(":"))
+
+    if from_date:
+        try:
+            start_date = datetime.strptime(from_date, "%Y-%m-%d").date()
+            day_offset_start = 0
+        except ValueError:
+            start_date = datetime.now(BRISBANE).date()
+            day_offset_start = 1
+    else:
+        start_date = datetime.now(BRISBANE).date()
+        day_offset_start = 1
+
+    slots = []
+
+    for offset in range(day_offset_start, max_days + day_offset_start + 1):
+        day = start_date + timedelta(days=offset)
+        if day.weekday() >= 5:
+            continue
+
+        biz_start = datetime(day.year, day.month, day.day, bh_start[0], bh_start[1], tzinfo=BRISBANE)
+        biz_end   = datetime(day.year, day.month, day.day, bh_end[0],   bh_end[1],   tzinfo=BRISBANE)
+
+        t = biz_start
+        while t + duration <= biz_end:
+            slot_end = t + duration
+
+            # Find the furthest end of any overlapping busy window (with buffer)
+            max_conflict_end = None
+            for (bs, be) in busy_windows:
+                if t < be + buffer and slot_end > bs - buffer:
+                    if max_conflict_end is None or be > max_conflict_end:
+                        max_conflict_end = be
+
+            if max_conflict_end is None:
+                slots.append({
+                    "start": t.isoformat(),
+                    "end":   slot_end.isoformat(),
+                })
+                if len(slots) >= num_slots:
+                    return slots
+                t = slot_end + buffer
+            else:
+                # Jump past the conflict and align to nearest 15-min boundary
+                jump = max_conflict_end.astimezone(BRISBANE) + buffer
+                rem  = (jump.hour * 60 + jump.minute) % 15
+                if rem:
+                    jump = jump + timedelta(minutes=15 - rem)
+                t = jump.replace(second=0, microsecond=0)
+
+    return slots
+
+
+@app.get("/api/calendar/free-slots")
+async def api_calendar_free_slots(
+    account: str = "financial",
+    duration: int = None,
+    from_date: str = None,
+):
+    """
+    Find free meeting slots by querying all relevant calendars and removing busy windows.
+    financial/gmail: checks M365 financial + Google Calendar tax.
+    personal: checks all three calendars.
+    Returns up to 3 slot objects with ISO start/end strings (Brisbane time).
+    """
+    from zoneinfo import ZoneInfo
+    BRISBANE = ZoneInfo("Australia/Brisbane")
+
+    biz_start  = await get_setting("meeting_hours_start")  or "09:00"
+    biz_end    = await get_setting("meeting_hours_end")    or "17:00"
+    buffer_min = int(await get_setting("meeting_buffer_minutes")   or "15")
+    if duration is None:
+        duration = int(await get_setting("meeting_default_duration") or "60")
+
+    # Search window: from_date (or today) through 16 days ahead
+    if from_date:
+        try:
+            anchor = datetime.strptime(from_date, "%Y-%m-%d").replace(tzinfo=BRISBANE)
+        except ValueError:
+            anchor = datetime.now(BRISBANE)
+    else:
+        anchor = datetime.now(BRISBANE)
+
+    window_start = anchor.replace(hour=0, minute=0, second=0, microsecond=0)
+    window_end   = window_start + timedelta(days=18)
+
+    # Always fetch both business calendars; add personal if needed
+    fetches = [
+        graph_get_busy_windows("financial", window_start, window_end),
+        gmail_get_busy_windows(window_start, window_end),
+    ]
+    if account == "personal":
+        fetches.append(graph_get_busy_windows("personal", window_start, window_end))
+
+    batches = await asyncio.gather(*fetches, return_exceptions=True)
+
+    busy = []
+    for batch in batches:
+        if not isinstance(batch, Exception):
+            busy.extend(batch)
+    busy.sort(key=lambda x: x[0])
+
+    slots = _find_free_slots(
+        busy, biz_start, biz_end, duration, buffer_min,
+        from_date=from_date, num_slots=3,
+    )
+
+    return JSONResponse({"slots": slots, "duration": duration})
 
 
 @app.post("/api/email/{email_id}/file")

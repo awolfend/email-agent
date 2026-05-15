@@ -533,6 +533,48 @@ async def decline_calendar_event(email_id: str):
     await _respond_to_calendar_event(email_id, "declined")
 
 
+async def get_busy_windows(start_dt: datetime, end_dt: datetime) -> list[tuple]:
+    """
+    Return (start, end) UTC datetime tuples for all non-free, non-cancelled,
+    non-all-day events in the given window from Google Calendar primary.
+    Fails silently — returns [] on any error.
+    """
+    try:
+        token = await get_valid_token()
+        params = {
+            "timeMin":      start_dt.astimezone(timezone.utc).isoformat(),
+            "timeMax":      end_dt.astimezone(timezone.utc).isoformat(),
+            "singleEvents": "true",
+            "maxResults":   250,
+            "fields":       "items(start,end,status,transparency)",
+        }
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            resp = await client.get(
+                f"{CALENDAR_BASE}/calendars/primary/events",
+                headers={"Authorization": f"Bearer {token}"},
+                params=params,
+            )
+            resp.raise_for_status()
+        busy = []
+        for ev in resp.json().get("items", []):
+            if ev.get("status") == "cancelled":
+                continue
+            if ev.get("transparency") == "transparent":
+                continue
+            s = ev.get("start", {})
+            e = ev.get("end", {})
+            if "dateTime" not in s:
+                continue  # all-day event — no fixed time to block
+            s_dt = datetime.fromisoformat(s["dateTime"]).astimezone(timezone.utc)
+            e_dt = datetime.fromisoformat(e["dateTime"]).astimezone(timezone.utc)
+            busy.append((s_dt, e_dt))
+        return busy
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).debug(f"gmail get_busy_windows failed: {e}")
+        return []
+
+
 async def move_email(email_id: str, folder_name: str):
     label_id = await get_or_create_label(folder_name)
     token = await get_valid_token()
