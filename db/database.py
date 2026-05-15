@@ -107,6 +107,56 @@ async def init_db():
             )
         except Exception:
             pass
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS compose_drafts (
+                id INTEGER PRIMARY KEY,
+                account TEXT NOT NULL UNIQUE,
+                to_address TEXT,
+                cc_address TEXT,
+                subject TEXT,
+                body TEXT,
+                prompt TEXT,
+                updated_at TEXT
+            )
+        """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS meeting_proposals (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                outgoing_message_id TEXT,
+                account TEXT NOT NULL,
+                client_email TEXT,
+                client_name TEXT,
+                subject TEXT,
+                duration_minutes INTEGER,
+                sent_at TEXT,
+                status TEXT DEFAULT 'pending'
+            )
+        """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS meeting_slots (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                proposal_id INTEGER NOT NULL REFERENCES meeting_proposals(id),
+                slot_start TEXT NOT NULL,
+                slot_end TEXT NOT NULL,
+                auto_release_at TEXT NOT NULL,
+                owning_calendar_event_id TEXT,
+                mirror_event_id_financial TEXT,
+                mirror_event_id_google_tax TEXT,
+                status TEXT DEFAULT 'tentative'
+            )
+        """)
+        # Seed meeting settings defaults (INSERT OR IGNORE — never overwrite user values)
+        for key, value in [
+            ("meeting_hours_start", "09:00"),
+            ("meeting_hours_end", "17:00"),
+            ("meeting_buffer_minutes", "15"),
+            ("meeting_default_duration", "60"),
+            ("meeting_no_response_hours", "36"),
+            ("meeting_post_slot_buffer_minutes", "30"),
+        ]:
+            await db.execute(
+                "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (key, value)
+            )
         await db.commit()
 
 
@@ -526,3 +576,164 @@ async def get_filing_suggestions(sender_domain: str, limit: int = 5) -> list:
         """, (sender_domain, limit)) as cursor:
             rows = await cursor.fetchall()
             return [dict(row) for row in rows]
+
+
+# ---------------------------------------------------------------------------
+# compose_drafts — one row per account, restored when modal reopens
+# ---------------------------------------------------------------------------
+
+async def save_compose_draft(account: str, to_address: str = None, cc_address: str = None,
+                              subject: str = None, body: str = None, prompt: str = None):
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc).isoformat()
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("""
+            INSERT INTO compose_drafts (account, to_address, cc_address, subject, body, prompt, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(account) DO UPDATE SET
+                to_address = excluded.to_address,
+                cc_address = excluded.cc_address,
+                subject = excluded.subject,
+                body = excluded.body,
+                prompt = excluded.prompt,
+                updated_at = excluded.updated_at
+        """, (account, to_address, cc_address, subject, body, prompt, now))
+        await db.commit()
+
+
+async def get_compose_draft(account: str) -> dict | None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT * FROM compose_drafts WHERE account = ?", (account,)
+        ) as cursor:
+            row = await cursor.fetchone()
+            return dict(row) if row else None
+
+
+async def clear_compose_draft(account: str):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("DELETE FROM compose_drafts WHERE account = ?", (account,))
+        await db.commit()
+
+
+# ---------------------------------------------------------------------------
+# meeting_proposals
+# ---------------------------------------------------------------------------
+
+async def save_meeting_proposal(outgoing_message_id: str, account: str, client_email: str,
+                                 client_name: str, subject: str, duration_minutes: int,
+                                 sent_at: str) -> int:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute("""
+            INSERT INTO meeting_proposals
+                (outgoing_message_id, account, client_email, client_name, subject, duration_minutes, sent_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (outgoing_message_id, account, client_email, client_name, subject, duration_minutes, sent_at))
+        await db.commit()
+        return cursor.lastrowid
+
+
+async def get_meeting_proposal(proposal_id: int) -> dict | None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT * FROM meeting_proposals WHERE id = ?", (proposal_id,)
+        ) as cursor:
+            row = await cursor.fetchone()
+            return dict(row) if row else None
+
+
+async def get_open_proposals_for_client(client_email: str) -> list:
+    """Return pending proposals for a given client email — used for response detection."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("""
+            SELECT * FROM meeting_proposals
+            WHERE client_email = ? AND status = 'pending'
+            ORDER BY sent_at DESC
+        """, (client_email,)) as cursor:
+            return [dict(r) for r in await cursor.fetchall()]
+
+
+async def update_proposal_status(proposal_id: int, status: str):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "UPDATE meeting_proposals SET status = ? WHERE id = ?", (status, proposal_id)
+        )
+        await db.commit()
+
+
+async def get_all_pending_proposals() -> list:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT * FROM meeting_proposals WHERE status = 'pending' ORDER BY sent_at DESC"
+        ) as cursor:
+            return [dict(r) for r in await cursor.fetchall()]
+
+
+# ---------------------------------------------------------------------------
+# meeting_slots
+# ---------------------------------------------------------------------------
+
+async def save_meeting_slot(proposal_id: int, slot_start: str, slot_end: str,
+                             auto_release_at: str, owning_calendar_event_id: str = None,
+                             mirror_event_id_financial: str = None,
+                             mirror_event_id_google_tax: str = None) -> int:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute("""
+            INSERT INTO meeting_slots
+                (proposal_id, slot_start, slot_end, auto_release_at,
+                 owning_calendar_event_id, mirror_event_id_financial, mirror_event_id_google_tax)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (proposal_id, slot_start, slot_end, auto_release_at,
+              owning_calendar_event_id, mirror_event_id_financial, mirror_event_id_google_tax))
+        await db.commit()
+        return cursor.lastrowid
+
+
+async def get_slots_for_proposal(proposal_id: int) -> list:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT * FROM meeting_slots WHERE proposal_id = ? ORDER BY slot_start ASC",
+            (proposal_id,)
+        ) as cursor:
+            return [dict(r) for r in await cursor.fetchall()]
+
+
+async def update_slot_status(slot_id: int, status: str):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "UPDATE meeting_slots SET status = ? WHERE id = ?", (status, slot_id)
+        )
+        await db.commit()
+
+
+async def get_expired_tentative_slots() -> list:
+    """Return tentative slots whose auto_release_at has passed — for background expiry task."""
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc).isoformat()
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("""
+            SELECT ms.*, mp.account
+            FROM meeting_slots ms
+            JOIN meeting_proposals mp ON ms.proposal_id = mp.id
+            WHERE ms.status = 'tentative' AND ms.auto_release_at < ?
+        """, (now,)) as cursor:
+            return [dict(r) for r in await cursor.fetchall()]
+
+
+async def expire_completed_proposals():
+    """Mark proposals as expired when all their slots have been released."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("""
+            UPDATE meeting_proposals SET status = 'expired'
+            WHERE status = 'pending'
+            AND id NOT IN (
+                SELECT DISTINCT proposal_id FROM meeting_slots WHERE status = 'tentative'
+            )
+        """)
+        await db.commit()
