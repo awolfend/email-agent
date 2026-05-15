@@ -2108,7 +2108,7 @@
     }
 
     function openAuthLogin(account) {
-        window.open(`http://localhost:8000/auth/login/${account}`, '_blank');
+        window.open(`${window.location.origin}/auth/login/${account}`, '_blank');
     }
 
     async function loadAuthErrors() {
