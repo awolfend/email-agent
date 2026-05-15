@@ -298,6 +298,47 @@ async def get_user_profile(account: str) -> dict:
         return response.json()
 
 
+async def search_contacts(account: str, query: str, limit: int = 10) -> list[dict]:
+    """
+    Search M365 contacts by display name or email using $search.
+    Returns [{ name, email, source: 'contacts' }].
+    Fails silently — never raises.
+    """
+    if not query:
+        return []
+    try:
+        token = await get_valid_token(account)
+        base  = _mailbox_base(account)
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.get(
+                f"{base}/contacts",
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "ConsistencyLevel": "eventual",
+                },
+                params={
+                    "$search": f'"{query}"',
+                    "$top": limit,
+                    "$select": "displayName,emailAddresses",
+                },
+            )
+        if not resp.is_success:
+            return []
+        results = []
+        for item in resp.json().get("value", []):
+            name = (item.get("displayName") or "").strip()
+            addresses = item.get("emailAddresses") or []
+            email = next((a.get("address", "") for a in addresses if a.get("address")), "")
+            email = email.strip()
+            if not email:
+                continue
+            results.append({"name": name or email, "email": email, "source": "contacts"})
+        return results
+    except Exception as e:
+        logger.debug(f"Graph contact search failed ({account}): {e}")
+        return []
+
+
 async def delete_email(account: str, email_id: str):
     """Soft delete — moves to Deleted Items."""
     token = await get_valid_token(account)

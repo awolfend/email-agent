@@ -55,12 +55,14 @@ from db.database import (
     get_auth_errors,
     upsert_sender_rule, get_all_sender_rules,
     delete_sender_rule, clear_all_sender_rules,
+    search_contact_history,
+    save_compose_draft, get_compose_draft, clear_compose_draft,
 )
 from agent.poller import start_scheduler, poll_all
 from agent.drafter import generate_draft
 from agent.learner import build_voice_profiles
-from connectors.hubspot import get_contact_context as hubspot_context
-from connectors.graph import get_email_history as graph_email_history
+from connectors.hubspot import get_contact_context as hubspot_context, search_contacts as hubspot_search_contacts
+from connectors.graph import get_email_history as graph_email_history, search_contacts as graph_search_contacts
 from connectors.gmail import get_email_history as gmail_email_history
 
 load_dotenv("config/.env")
@@ -361,6 +363,61 @@ async def api_filing_suggestions(sender: str = ""):
             domain = addrs[0].split("@")[-1].lower()
     suggestions = await get_filing_suggestions(domain) if domain else []
     return JSONResponse(suggestions)
+
+
+@app.get("/api/contacts/search")
+async def api_contacts_search(q: str = "", account: str = "financial"):
+    """
+    Search contacts across HubSpot (financial only), M365 contacts, and email history.
+    Returns [{ name, email, source }] deduped by email, priority: hubspot > contacts > history.
+    Minimum query length: 2 characters.
+    """
+    if len(q) < 2:
+        return JSONResponse([])
+
+    searches = []
+    if account == "financial":
+        searches.append(hubspot_search_contacts(q))
+    if account in ("financial", "personal"):
+        searches.append(graph_search_contacts(account, q))
+    searches.append(search_contact_history(account, q))
+
+    batches = await asyncio.gather(*searches, return_exceptions=True)
+
+    seen, results = set(), []
+    for batch in batches:
+        if isinstance(batch, Exception):
+            continue
+        for r in batch:
+            key = r["email"].lower().strip()
+            if key and key not in seen:
+                seen.add(key)
+                results.append(r)
+
+    return JSONResponse(results[:20])
+
+
+@app.get("/api/compose/draft-state")
+async def api_get_compose_draft(account: str = "financial"):
+    """Return the saved compose draft for the given account, or null."""
+    draft = await get_compose_draft(account)
+    return JSONResponse(draft or {})
+
+
+@app.post("/api/compose/draft-state")
+async def api_save_compose_draft(request: Request):
+    """Auto-save compose draft state for an account."""
+    body = await request.json()
+    account = body.get("account", "financial")
+    await save_compose_draft(
+        account=account,
+        to_address=body.get("to_address"),
+        cc_address=body.get("cc_address"),
+        subject=body.get("subject"),
+        body=body.get("body"),
+        prompt=body.get("prompt"),
+    )
+    return {"ok": True}
 
 
 @app.post("/api/email/{email_id}/file")

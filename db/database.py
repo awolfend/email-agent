@@ -726,6 +726,43 @@ async def get_expired_tentative_slots() -> list:
             return [dict(r) for r in await cursor.fetchall()]
 
 
+async def search_contact_history(account: str, query: str, limit: int = 10) -> list[dict]:
+    """
+    Search action_log sender field for contacts matching query.
+    Returns [{ name, email, source: 'history' }], deduped by email.
+    """
+    import re
+    q = f"%{query}%"
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("""
+            SELECT DISTINCT sender FROM action_log
+            WHERE account = ? AND sender LIKE ? AND sender != ''
+            ORDER BY timestamp DESC
+            LIMIT ?
+        """, (account, q, limit * 3)) as cursor:
+            rows = [r[0] for r in await cursor.fetchall()]
+
+    seen, results = set(), []
+    for raw in rows:
+        raw = raw.strip()
+        # Parse "Display Name <email>" or bare email
+        m = re.match(r'^(.*?)\s*<([^>]+)>$', raw)
+        if m:
+            name  = m.group(1).strip().strip('"')
+            email = m.group(2).strip().lower()
+        elif "@" in raw:
+            email = raw.lower()
+            name  = email
+        else:
+            continue
+        if email and email not in seen:
+            seen.add(email)
+            results.append({"name": name or email, "email": email, "source": "history"})
+        if len(results) >= limit:
+            break
+    return results
+
+
 async def expire_completed_proposals():
     """Mark proposals as expired when all their slots have been released."""
     async with aiosqlite.connect(DB_PATH) as db:

@@ -132,6 +132,51 @@ def _format_engagements(items: list[dict]) -> dict[str, list[str]]:
     return out
 
 
+async def search_contacts(query: str, limit: int = 10) -> list[dict]:
+    """
+    Full-text search across HubSpot contacts by name or email.
+    Returns [{ name, email, company, source: 'hubspot' }].
+    Fails silently — never raises.
+    """
+    if not os.getenv("HUBSPOT_API_KEY", "") or not query:
+        return []
+    try:
+        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+            resp = await client.post(
+                f"{_BASE_CRM}/objects/contacts/search",
+                headers=_headers(),
+                json={
+                    "query": query,
+                    "properties": ["firstname", "lastname", "email", "company"],
+                    "filterGroups": [{"filters": [
+                        {"propertyName": "email", "operator": "HAS_PROPERTY"}
+                    ]}],
+                    "limit": limit,
+                },
+            )
+        if not resp.is_success:
+            return []
+        results = []
+        for row in resp.json().get("results", []):
+            props = row.get("properties", {})
+            email = (props.get("email") or "").strip()
+            if not email:
+                continue
+            first = (props.get("firstname") or "").strip()
+            last  = (props.get("lastname") or "").strip()
+            name  = " ".join(p for p in [first, last] if p) or email
+            results.append({
+                "name": name,
+                "email": email,
+                "company": (props.get("company") or "").strip(),
+                "source": "hubspot",
+            })
+        return results
+    except Exception as e:
+        logger.debug(f"HubSpot contact search failed: {e}")
+        return []
+
+
 async def get_contact_context(sender_email: str) -> str:
     """
     Look up sender_email in HubSpot and return a formatted CRM context block.
