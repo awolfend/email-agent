@@ -6,7 +6,7 @@ from connectors.graph import get_emails as graph_get_emails
 from connectors.gmail import get_emails as gmail_get_emails
 from agent.classifier import classify_email
 from agent.actions import execute_action
-from db.database import log_action, get_email_by_id, update_email_status, ensure_inbox_state, mark_missing_as_archived, set_auth_error, clear_auth_error, prune_old_records, get_sender_rule, get_open_proposals_for_client
+from db.database import log_action, get_email_by_id, update_email_status, ensure_inbox_state, mark_missing_as_archived, set_auth_error, clear_auth_error, prune_old_records, get_sender_rule, get_open_proposals_for_client, get_expired_tentative_slots, update_slot_status, expire_completed_proposals
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -187,9 +187,57 @@ async def poll_all():
         logger.info(f"Pruned {pruned} records older than 90 days")
 
 
+async def release_expired_slots():
+    """
+    Delete calendar holds for any tentative meeting slots whose auto_release_at has passed,
+    mark them declined, then expire proposals that have no remaining tentative slots.
+    """
+    try:
+        from connectors.graph import delete_calendar_event as graph_delete_event
+        from connectors.gmail import delete_calendar_event as gmail_delete_event
+
+        expired = await get_expired_tentative_slots()
+        if not expired:
+            return
+
+        logger.info(f"Auto-releasing {len(expired)} expired tentative meeting slot(s)")
+
+        for slot in expired:
+            account = slot.get("account", "financial")
+            own_id  = slot.get("owning_calendar_event_id")
+            fin_id  = slot.get("mirror_event_id_financial")
+            tax_id  = slot.get("mirror_event_id_google_tax")
+
+            deletes = []
+            if own_id:
+                if account == "gmail":
+                    deletes.append(gmail_delete_event(own_id))
+                else:
+                    deletes.append(graph_delete_event(account, own_id))
+            if fin_id:
+                deletes.append(graph_delete_event("financial", fin_id))
+            if tax_id:
+                deletes.append(gmail_delete_event(tax_id))
+
+            if deletes:
+                results = await asyncio.gather(*deletes, return_exceptions=True)
+                errors = [r for r in results if isinstance(r, Exception)]
+                if errors:
+                    logger.warning(f"Auto-release: {len(errors)} calendar deletion(s) failed for slot {slot['id']}")
+
+            await update_slot_status(slot["id"], "declined")
+            logger.info(f"Auto-released slot {slot['id']} (proposal {slot['proposal_id']})")
+
+        await expire_completed_proposals()
+
+    except Exception as e:
+        logger.error(f"release_expired_slots failed: {e}")
+
+
 def start_scheduler():
     scheduler = AsyncIOScheduler()
     scheduler.add_job(poll_all, "interval", minutes=5, id="poll_all")
+    scheduler.add_job(release_expired_slots, "interval", minutes=15, id="release_expired_slots")
     scheduler.start()
-    logger.info("Poller started — polling every 5 minutes")
+    logger.info("Poller started — polling every 5 minutes, slot auto-release every 15 minutes")
     return scheduler
