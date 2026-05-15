@@ -60,6 +60,8 @@ from db.database import (
     save_compose_draft, get_compose_draft, clear_compose_draft,
     log_action,
     save_meeting_proposal, save_meeting_slot,
+    get_meeting_proposal, get_slots_for_proposal,
+    get_open_proposals_for_client,
 )
 from agent.poller import start_scheduler, poll_all
 from agent.drafter import generate_draft, generate_compose_draft
@@ -654,6 +656,32 @@ async def api_compose_send(body: ComposeSendRequest):
         "ok": True,
         **({"proposal_id": proposal_id} if proposal_id else {}),
     })
+
+
+@app.get("/api/meeting/by-sender")
+async def api_meeting_by_sender(sender: str = ""):
+    """Return all open (pending) meeting proposals for a given sender email address."""
+    if not sender:
+        return JSONResponse([])
+    # Extract raw email address if in "Name <email>" format
+    clean = re.search(r'<([^>]+)>', sender)
+    email_addr = clean.group(1).strip().lower() if clean else sender.strip().lower()
+    proposals = await get_open_proposals_for_client(email_addr)
+    results = []
+    for p in proposals:
+        slots = await get_slots_for_proposal(p["id"])
+        results.append({"proposal": p, "slots": slots})
+    return JSONResponse(results)
+
+
+@app.get("/api/meeting/{proposal_id}")
+async def api_get_meeting(proposal_id: int):
+    """Return a meeting proposal and its slots by proposal ID."""
+    proposal = await get_meeting_proposal(proposal_id)
+    if not proposal:
+        return JSONResponse({"error": "Not found"}, status_code=404)
+    slots = await get_slots_for_proposal(proposal_id)
+    return JSONResponse({"proposal": proposal, "slots": slots})
 
 
 def _find_free_slots(

@@ -6,7 +6,7 @@ from connectors.graph import get_emails as graph_get_emails
 from connectors.gmail import get_emails as gmail_get_emails
 from agent.classifier import classify_email
 from agent.actions import execute_action
-from db.database import log_action, get_email_by_id, update_email_status, ensure_inbox_state, mark_missing_as_archived, set_auth_error, clear_auth_error, prune_old_records, get_sender_rule
+from db.database import log_action, get_email_by_id, update_email_status, ensure_inbox_state, mark_missing_as_archived, set_auth_error, clear_auth_error, prune_old_records, get_sender_rule, get_open_proposals_for_client
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -76,15 +76,25 @@ async def _process_emails(account: str, emails: list, normalize_fn) -> set:
             await ensure_inbox_state(n["stable_id"], n["op_id"])
             continue
 
-        rule = await get_sender_rule(n["sender"])
-        if rule and rule["source"] == "manual" and rule["count"] >= 2:
+        # Meeting response detection takes priority over all other classification
+        open_proposals = await get_open_proposals_for_client(n["sender"])
+        if open_proposals:
+            count = len(open_proposals)
             result = {
-                "classification": rule["classification"],
-                "confidence": 1.0,
-                "reason": "sender rule (manual, confirmed)",
+                "classification": "meeting_response",
+                "confidence": 0.95,
+                "reason": f"Meeting response detected — {count} open proposal(s) from this sender",
             }
         else:
-            result = await classify_email(n["subject"], n["sender"], n["body"][:1000])
+            rule = await get_sender_rule(n["sender"])
+            if rule and rule["source"] == "manual" and rule["count"] >= 2:
+                result = {
+                    "classification": rule["classification"],
+                    "confidence": 1.0,
+                    "reason": "sender rule (manual, confirmed)",
+                }
+            else:
+                result = await classify_email(n["subject"], n["sender"], n["body"][:1000])
 
         classification = result.get("classification")
         confidence = result.get("confidence", 0.0)

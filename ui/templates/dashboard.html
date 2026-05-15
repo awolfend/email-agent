@@ -902,6 +902,80 @@
         }
         .compose-cancel-btn:hover { color: var(--text); border-color: var(--text-dim); }
 
+        /* ---- Meeting response panel ---- */
+        .tag-meeting_response { background: rgba(20,184,166,0.15); color: var(--teal); }
+        .dot-meeting_response { background: var(--teal); }
+        #meeting-response-panel {
+            display: none;
+            flex-direction: column;
+            gap: 10px;
+            padding: 12px 20px;
+            border-bottom: 1px solid var(--border);
+            background: rgba(20,184,166,0.05);
+            flex-shrink: 0;
+        }
+        #meeting-response-panel.show { display: flex; }
+        .mr-panel-title {
+            font-size: 11px;
+            font-weight: 700;
+            color: var(--teal);
+            text-transform: uppercase;
+            letter-spacing: 0.07em;
+        }
+        .mr-proposal-meta { font-size: 12px; color: var(--text-dim); }
+        .mr-slot-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 7px 10px;
+            background: var(--surface2);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+        }
+        .mr-slot-num { font-size: 11px; color: var(--text-dimmer); width: 18px; flex-shrink: 0; }
+        .mr-slot-time { flex: 1; font-size: 12px; color: var(--text); }
+        .mr-slot-status { font-size: 10px; padding: 2px 6px; border-radius: 10px; font-weight: 600; flex-shrink: 0; }
+        .mr-slot-tentative { background: rgba(245,158,11,0.15); color: var(--yellow); }
+        .mr-slot-confirmed { background: rgba(34,197,94,0.15); color: var(--green); }
+        .mr-slot-declined { background: rgba(107,114,128,0.15); color: var(--grey); }
+        .mr-confirm-btn {
+            background: none;
+            border: 1px solid var(--green);
+            border-radius: 5px;
+            color: var(--green);
+            cursor: pointer;
+            font-size: 11px;
+            padding: 3px 9px;
+            transition: all 0.15s;
+            white-space: nowrap;
+        }
+        .mr-confirm-btn:hover { background: rgba(34,197,94,0.1); }
+        .mr-decline-slot-btn {
+            background: none;
+            border: 1px solid var(--border);
+            border-radius: 5px;
+            color: var(--text-dimmer);
+            cursor: pointer;
+            font-size: 11px;
+            padding: 3px 9px;
+            transition: all 0.15s;
+            white-space: nowrap;
+        }
+        .mr-decline-slot-btn:hover { border-color: var(--red); color: var(--red); }
+        .mr-decline-all-btn {
+            background: none;
+            border: 1px solid var(--red);
+            border-radius: 6px;
+            color: var(--red);
+            cursor: pointer;
+            font-size: 11px;
+            font-weight: 600;
+            padding: 5px 12px;
+            transition: all 0.15s;
+            align-self: flex-start;
+        }
+        .mr-decline-all-btn:hover { background: rgba(239,68,68,0.1); }
+
         .confidence-bar { height: 3px; background: var(--border); border-radius: 2px; margin-top: 4px; overflow: hidden; }
         .confidence-fill { height: 100%; border-radius: 2px; background: var(--accent); }
         .generating { opacity: 0.6; font-style: italic; }
@@ -1365,6 +1439,13 @@
 
         <div id="action-bar"></div>
 
+        <div id="meeting-response-panel">
+            <div class="mr-panel-title">📅 Meeting Response</div>
+            <div class="mr-proposal-meta" id="mr-proposal-meta"></div>
+            <div id="mr-slots-list"></div>
+            <button type="button" class="mr-decline-all-btn" id="mr-decline-all-btn" onclick="meetingDeclineAll()">✕ Decline All — No Longer Available</button>
+        </div>
+
         <div id="detail-body">
             <div id="email-body-section">
                 <div id="email-body-content"></div>
@@ -1681,7 +1762,7 @@
     let currentFileEmailId = null;
 
     const priorityOrder = {
-        action_required: 1, calendar: 2, fyi: 3,
+        meeting_response: 1, action_required: 1, calendar: 2, fyi: 3,
         notification: 4, newsletter: 5, spam: 6, unknown: 7, error: 8
     };
 
@@ -2027,7 +2108,7 @@
 
         const draftSection = document.getElementById('draft-section');
         const resizerV = document.getElementById('resizer-v');
-        if (email.classification === 'action_required' && currentMode === 'inbox') {
+        if ((email.classification === 'action_required' || email.classification === 'meeting_response') && currentMode === 'inbox') {
             draftSection.style.display = 'flex';
             resizerV.style.display = 'block';
             draftVisible = true;
@@ -2035,6 +2116,13 @@
             draftSection.style.display = 'none';
             resizerV.style.display = 'none';
             draftVisible = false;
+        }
+
+        // Meeting response panel
+        if (email.classification === 'meeting_response' && currentMode === 'inbox') {
+            loadMeetingResponsePanel(email.sender || '');
+        } else {
+            document.getElementById('meeting-response-panel').classList.remove('show');
         }
         document.getElementById('draft-to-input').value = extractEmailFromSender(email.sender || '');
         document.getElementById('draft-guidance-input').value = '';
@@ -2085,7 +2173,13 @@
             </select>`;
 
         let actions = '';
-        if (c === 'action_required') {
+        if (c === 'meeting_response') {
+            actions = `
+                <button class="action-btn send" onclick="doSend()">✉️ Send Reply</button>
+                <button class="action-btn archive" onclick="doArchive()">⬇ Archive</button>
+                ${fileBtn}
+                <button class="action-btn delete" onclick="doDelete()">🗑 Delete</button>`;
+        } else if (c === 'action_required') {
             actions = `
                 <button class="action-btn send" onclick="doSend()">✉️ Send Reply</button>
                 <button class="action-btn archive" onclick="doArchive()">⬇ Archive</button>
@@ -2645,6 +2739,103 @@
         document.getElementById('empty-state').style.display = 'flex';
         document.getElementById('email-detail').style.display = 'none';
         await loadQueue();
+    }
+
+    // ---- Meeting response panel ----
+
+    let currentMeetingProposalId = null;
+
+    async function loadMeetingResponsePanel(sender) {
+        const panel    = document.getElementById('meeting-response-panel');
+        const metaEl   = document.getElementById('mr-proposal-meta');
+        const listEl   = document.getElementById('mr-slots-list');
+        const decAllBtn = document.getElementById('mr-decline-all-btn');
+
+        panel.classList.add('show');
+        metaEl.textContent = 'Loading…';
+        listEl.innerHTML = '';
+        decAllBtn.style.display = 'none';
+        currentMeetingProposalId = null;
+
+        try {
+            const res  = await fetch(`/api/meeting/by-sender?sender=${encodeURIComponent(sender)}`);
+            const data = await res.json();
+            if (!data.length) {
+                metaEl.textContent = 'No open meeting proposals found for this sender.';
+                return;
+            }
+            const { proposal, slots } = data[0];
+            currentMeetingProposalId = proposal.id;
+            const sent = new Date(proposal.sent_at).toLocaleString('en-AU', { dateStyle: 'medium', timeStyle: 'short' });
+            metaEl.textContent = `Re: "${proposal.subject}" — sent ${sent}`;
+            renderMeetingSlots(slots, proposal.id);
+            const hasPending = slots.some(s => s.status === 'tentative');
+            decAllBtn.style.display = hasPending ? '' : 'none';
+        } catch(e) {
+            metaEl.textContent = 'Could not load proposal details.';
+        }
+    }
+
+    function renderMeetingSlots(slots, proposalId) {
+        const listEl = document.getElementById('mr-slots-list');
+        if (!slots.length) {
+            listEl.innerHTML = '<div style="color:var(--text-dimmer);font-size:12px;padding:4px 0;">No slots recorded.</div>';
+            return;
+        }
+        listEl.innerHTML = slots.map((s, i) => {
+            const start   = new Date(s.slot_start);
+            const end     = new Date(s.slot_end);
+            const timeStr = `${start.toLocaleString('en-AU', {weekday:'short',month:'short',day:'numeric',hour:'numeric',minute:'2-digit',hour12:true})} – ${end.toLocaleString('en-AU', {hour:'numeric',minute:'2-digit',hour12:true})}`;
+            let badge = '', btns = '';
+            if (s.status === 'tentative') {
+                badge = '<span class="mr-slot-status mr-slot-tentative">Tentative</span>';
+                btns  = `<button type="button" class="mr-confirm-btn" onclick="meetingConfirmSlot(${proposalId},${s.id})">✓ Confirm</button>
+                         <button type="button" class="mr-decline-slot-btn" onclick="meetingDeclineSlot(${proposalId},${s.id})" title="Remove this slot">✕</button>`;
+            } else if (s.status === 'confirmed') {
+                badge = '<span class="mr-slot-status mr-slot-confirmed">Confirmed</span>';
+            } else {
+                badge = '<span class="mr-slot-status mr-slot-declined">Declined</span>';
+            }
+            return `<div class="mr-slot-row">
+                <span class="mr-slot-num">${i+1}.</span>
+                <span class="mr-slot-time">${escHtml(timeStr)}</span>
+                ${badge}${btns}
+            </div>`;
+        }).join('');
+    }
+
+    async function meetingConfirmSlot(proposalId, slotId) {
+        const res  = await fetch(`/api/meeting/${proposalId}/confirm/${slotId}`, { method: 'POST' });
+        const data = await res.json();
+        if (data.ok) {
+            showToast('✓ Slot confirmed — calendar invite sent');
+            if (currentEmail) loadMeetingResponsePanel(currentEmail.sender || '');
+        } else {
+            showToast(`Confirm failed: ${data.error || 'unknown'}`);
+        }
+    }
+
+    async function meetingDeclineSlot(proposalId, slotId) {
+        const res  = await fetch(`/api/meeting/${proposalId}/decline-slot/${slotId}`, { method: 'POST' });
+        const data = await res.json();
+        if (data.ok) {
+            showToast('Slot removed');
+            if (currentEmail) loadMeetingResponsePanel(currentEmail.sender || '');
+        } else {
+            showToast(`Decline failed: ${data.error || 'unknown'}`);
+        }
+    }
+
+    async function meetingDeclineAll() {
+        if (!currentMeetingProposalId) return;
+        const res  = await fetch(`/api/meeting/${currentMeetingProposalId}/decline`, { method: 'POST' });
+        const data = await res.json();
+        if (data.ok) {
+            showToast('All slots declined — holds released');
+            document.getElementById('meeting-response-panel').classList.remove('show');
+        } else {
+            showToast(`Decline failed: ${data.error || 'unknown'}`);
+        }
     }
 
     // ---- Compose ----
