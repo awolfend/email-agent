@@ -945,6 +945,42 @@
         }
         .ci-meta-label { color: var(--text-dimmer); font-weight: 500; }
 
+        /* ---- Scheduling request panel ---- */
+        #scheduling-panel {
+            display: none;
+            flex-direction: column;
+            gap: 8px;
+            padding: 12px 20px;
+            border-bottom: 1px solid var(--border);
+            background: rgba(79,124,255,0.05);
+            flex-shrink: 0;
+        }
+        #scheduling-panel.show { display: flex; }
+        .sched-panel-title {
+            font-size: 11px;
+            font-weight: 700;
+            color: var(--accent);
+            text-transform: uppercase;
+            letter-spacing: 0.07em;
+        }
+        .sched-topic { font-size: 13px; font-weight: 600; color: var(--text); }
+        .sched-label { font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; margin-top: 2px; }
+        .sched-proposed { font-size: 12px; color: var(--text-dim); }
+        .sched-slots { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 2px; }
+        .sched-slot-btn {
+            font-size: 11px;
+            padding: 5px 10px;
+            background: var(--accent);
+            color: #fff;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            line-height: 1.4;
+            transition: opacity 0.15s;
+        }
+        .sched-slot-btn:hover { opacity: 0.82; }
+        .sched-loading { font-size: 12px; color: var(--muted); }
+
         /* ---- Meeting response panel ---- */
         .tag-meeting_response { background: rgba(20,184,166,0.15); color: var(--teal); }
         .dot-meeting_response { background: var(--teal); }
@@ -1518,6 +1554,11 @@
             <div class="mr-proposal-meta" id="mr-proposal-meta"></div>
             <div id="mr-slots-list"></div>
             <button type="button" class="mr-decline-all-btn" id="mr-decline-all-btn" onclick="meetingDeclineAll()">✕ Decline All — No Longer Available</button>
+        </div>
+
+        <div id="scheduling-panel">
+            <div class="sched-panel-title">📆 Scheduling Request</div>
+            <div id="sched-content"></div>
         </div>
 
         <div id="detail-body">
@@ -2253,6 +2294,14 @@
         } else {
             document.getElementById('meeting-response-panel').classList.remove('show');
         }
+
+        // Scheduling request panel
+        document.getElementById('scheduling-panel').classList.remove('show');
+        document.getElementById('sched-content').innerHTML = '';
+        if (email.classification === 'action_required' && currentMode === 'inbox') {
+            checkSchedule(email);
+        }
+
         document.getElementById('draft-to-input').value = extractEmailFromSender(email.sender || '');
         document.getElementById('draft-guidance-input').value = '';
 
@@ -2941,6 +2990,78 @@
             detectMeetingIntent();
             composeDraftAutoSave();
         }, 50);
+    }
+
+    // ---- Scheduling request panel ----
+
+    async function checkSchedule(email) {
+        const panel   = document.getElementById('scheduling-panel');
+        const content = document.getElementById('sched-content');
+        content.innerHTML = '<div class="sched-loading">Checking for scheduling request…</div>';
+        panel.classList.add('show');
+
+        try {
+            const res  = await fetch(`/api/email/${encodeURIComponent(email.email_id)}/check-schedule`, { method: 'POST' });
+            const data = await res.json();
+
+            if (!data.is_scheduling) {
+                panel.classList.remove('show');
+                content.innerHTML = '';
+                return;
+            }
+
+            let html = '';
+            if (data.topic) {
+                html += `<div class="sched-topic">${escHtml(data.topic)}</div>`;
+            }
+            if (data.proposed_times && data.proposed_times.length) {
+                html += `<div class="sched-label">Sender proposes</div>`;
+                html += `<div class="sched-proposed">${data.proposed_times.map(t => escHtml(t)).join(' &bull; ')}</div>`;
+            }
+            if (data.free_slots && data.free_slots.length) {
+                html += `<div class="sched-label">Your next available (${data.duration_minutes} min)</div>`;
+                html += `<div class="sched-slots">`;
+                for (const slot of data.free_slots) {
+                    const label = _formatSlotLabel(slot.start, slot.end);
+                    const slotJson = JSON.stringify(slot).replace(/"/g, '&quot;');
+                    const timesJson = JSON.stringify(data.proposed_times || []).replace(/"/g, '&quot;');
+                    html += `<button class="sched-slot-btn" onclick="_confirmSlot(${slotJson}, ${timesJson})">${escHtml(label)}</button>`;
+                }
+                html += `</div>`;
+            }
+            content.innerHTML = html;
+        } catch(e) {
+            panel.classList.remove('show');
+            content.innerHTML = '';
+        }
+    }
+
+    function _formatSlotLabel(start, end) {
+        try {
+            const s = new Date(start);
+            const e = new Date(end);
+            const day = s.toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short' });
+            const t1  = s.toLocaleTimeString('en-AU', { hour: 'numeric', minute: '2-digit', hour12: true });
+            const t2  = e.toLocaleTimeString('en-AU', { hour: 'numeric', minute: '2-digit', hour12: true });
+            return `${day}, ${t1} – ${t2}`;
+        } catch(e) { return start; }
+    }
+
+    function _confirmSlot(slot, proposedTimes) {
+        const s = new Date(slot.start);
+        const label = s.toLocaleDateString('en-AU', { weekday: 'long', day: 'numeric', month: 'long' }) +
+                      ' at ' + s.toLocaleTimeString('en-AU', { hour: 'numeric', minute: '2-digit', hour12: true });
+        const theirPart = proposedTimes && proposedTimes.length
+            ? `Sender proposed: ${proposedTimes.join(', ')}. `
+            : '';
+        document.getElementById('draft-guidance-input').value =
+            `${theirPart}Confirm ${label} as the meeting time. Write a brief, clear confirmation.`;
+        if (!draftVisible) {
+            draftVisible = true;
+            document.getElementById('draft-section').style.display = 'flex';
+            document.getElementById('resizer-v').style.display = 'block';
+        }
+        generateDraft();
     }
 
     async function loadMeetingResponsePanel(sender) {

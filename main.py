@@ -956,6 +956,61 @@ async def api_calendar_free_slots(
     return JSONResponse({"slots": slots, "duration": duration})
 
 
+@app.post("/api/email/{email_id}/check-schedule")
+async def api_check_schedule(email_id: str):
+    """
+    Detect whether an email contains a scheduling request.
+    If yes, also returns the sender's proposed times and our next 3 free slots.
+    """
+    from agent.drafter import extract_scheduling_intent
+    email = await get_email_by_id(email_id)
+    if not email:
+        return JSONResponse({"is_scheduling": False})
+
+    intent = await extract_scheduling_intent(
+        subject=email["subject"] or "",
+        sender=email["sender"] or "",
+        body=email["body"] or "",
+    )
+    if not intent.get("is_scheduling"):
+        return JSONResponse({"is_scheduling": False})
+
+    account = email["account"]
+    BRISBANE = ZoneInfo("Australia/Brisbane")
+    biz_start  = await get_setting("meeting_hours_start")  or "09:00"
+    biz_end    = await get_setting("meeting_hours_end")    or "17:00"
+    buffer_min = int(await get_setting("meeting_buffer_minutes") or "15")
+    duration   = int(await get_setting("meeting_default_duration") or "60")
+
+    now = datetime.now(BRISBANE)
+    window_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    window_end   = window_start + timedelta(days=18)
+
+    fetches = [
+        graph_get_busy_windows("financial", window_start, window_end),
+        gmail_get_busy_windows(window_start, window_end),
+    ]
+    if account == "personal":
+        fetches.append(graph_get_busy_windows("personal", window_start, window_end))
+
+    batches = await asyncio.gather(*fetches, return_exceptions=True)
+    busy = []
+    for batch in batches:
+        if not isinstance(batch, Exception):
+            busy.extend(batch)
+    busy.sort(key=lambda x: x[0])
+
+    slots = _find_free_slots(busy, biz_start, biz_end, duration, buffer_min, num_slots=3)
+
+    return JSONResponse({
+        "is_scheduling": True,
+        "proposed_times": intent.get("proposed_times", []),
+        "topic": intent.get("topic", ""),
+        "free_slots": slots,
+        "duration_minutes": duration,
+    })
+
+
 @app.post("/api/email/{email_id}/file")
 async def api_file(email_id: str, body: FileRequest):
     email = await get_email_by_id(email_id)

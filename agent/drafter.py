@@ -1,4 +1,6 @@
 import os
+import re
+import json
 import httpx
 import logging
 from dotenv import load_dotenv
@@ -228,6 +230,34 @@ async def generate_draft(account: str, sender: str, subject: str, body: str,
     if footer:
         draft = draft + "\n\n" + footer
     return draft
+
+
+_SCHEDULING_EXTRACT_PROMPT = """Analyse this email and detect if the sender is making a scheduling request.
+
+Return JSON only, no explanation.
+Format: {{"is_scheduling": true, "proposed_times": ["phrase 1", "phrase 2"], "topic": "meeting purpose"}}
+Or if not a scheduling request: {{"is_scheduling": false}}
+
+Rules:
+- is_scheduling is true when the sender proposes specific times/dates OR asks for your availability
+- proposed_times contains verbatim time/date phrases from the email (empty array if no specific times stated)
+- topic is a brief description of the meeting purpose (empty string if unclear)
+
+Subject: {subject}
+From: {sender}
+Body: {body}"""
+
+
+async def extract_scheduling_intent(subject: str, sender: str, body: str) -> dict:
+    prompt = _SCHEDULING_EXTRACT_PROMPT.format(subject=subject, sender=sender, body=body[:2000])
+    try:
+        raw = await _call_claude(prompt)
+        match = re.search(r'\{.*\}', raw, re.DOTALL)
+        if match:
+            return json.loads(match.group())
+    except Exception as e:
+        logger.debug(f"extract_scheduling_intent failed: {e}")
+    return {"is_scheduling": False, "proposed_times": [], "topic": ""}
 
 
 async def generate_compose_draft(
