@@ -1,14 +1,19 @@
 import os
 import httpx
 import logging
+from dotenv import load_dotenv
+
+load_dotenv("config/.env")
 
 logger = logging.getLogger(__name__)
+
+_AUTHOR_NAME = os.getenv("AUTHOR_NAME", "the adviser")
 
 MIN_BODY_CHARS = 300
 MAX_EXAMPLES_FOR_SYNTHESIS = 50
 MAX_CHARS_PER_EXAMPLE = 400
 
-SYNTHESIS_PROMPT = """You are analysing {n} emails written by Anthony Wolfenden, a financial planner and tax adviser in Queensland, Australia.
+SYNTHESIS_PROMPT = """You are analysing {n} emails written by {author_name}, a financial planner and tax adviser in Queensland, Australia.
 
 Based on these emails, produce a detailed voice and style profile. Cover:
 - Tone and register — how formal, warm, direct he is
@@ -45,7 +50,7 @@ async def _synthesize(account: str, examples: list) -> str:
         for ex in sample
     )
 
-    prompt = SYNTHESIS_PROMPT.format(n=len(sample), email_texts=email_texts)
+    prompt = SYNTHESIS_PROMPT.format(n=len(sample), email_texts=email_texts, author_name=_AUTHOR_NAME)
 
     async with httpx.AsyncClient(timeout=60.0) as client:
         response = await client.post(
