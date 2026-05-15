@@ -617,3 +617,290 @@ Mobile channel for reviewing and actioning emails while travelling. Library: `py
 3. Re-authenticate both OAuth accounts (tokens are machine-bound)
 4. Copy `email-agent` script to `/opt/homebrew/bin/` with `sudo`
 5. Test full stack before decommissioning MacBook Pro as server
+
+---
+
+### 12.10 — Compose new emails + meeting proposals (Not started)
+
+Feature to compose and send NEW emails (not replies) with AI drafting, contact search, and optional meeting slot proposals. Plan fully agreed session 7. All decisions resolved. Implementation not yet started.
+
+#### Accounts and scope
+
+| Account | Display name | Contact source | HubSpot | Calendar | Filing CC |
+|---|---|---|---|---|---|
+| `financial` | Financial Planning | HubSpot → M365 contacts → email history | Yes — CC `FILING_EMAIL_FINANCIAL` on send | M365 financial (`/me/calendar`) | Yes |
+| `gmail` | Tax / Positive Tax | Google People API → email history (contacts need re-auth — v1 uses history) | No | Google Calendar (`primary`) | No |
+| `personal` | Personal | M365 contacts → email history | No | Personal M365 (`/users/{PERSONAL_EMAIL}/calendar`) | No |
+
+All three accounts support compose. Account is auto-suggested (HubSpot match → financial; tax keywords → gmail; otherwise → personal) but always user-overridable before sending.
+
+#### Calendar cross-blocking (confirmed)
+
+| Sending account | Owning calendar (full details) | Mirror blocks (no details, subject `"Hold"`) |
+|---|---|---|
+| `financial` | M365 financial | Google Calendar tax |
+| `gmail` (tax) | Google Calendar tax | M365 financial |
+| `personal` | Personal M365 | M365 financial + Google Calendar tax |
+
+Financial and tax meetings: 2 events per slot (1 owning + 1 mirror).
+Personal meetings: 3 events per slot (1 owning + 2 mirrors).
+
+All mirror events: no subject detail, no body, no attendees. Privacy rule: no calendar exposes another account's meeting content.
+
+**Permissions confirmed:** `Calendars.ReadWrite` delegated on financial app. `Calendars.ReadWrite` application on personal app. `calendar` scope in Gmail OAuth token.
+
+#### Calendar invite rule
+
+- 2–3 slots proposed → proposed times written as prose in email body only; client replies to choose
+- Exactly 1 slot proposed → calendar invite sent directly to client
+- No per-account toggle — driven solely by slot count
+
+#### Auto-release rule (per slot)
+
+`auto_release_at = min(slot_start + meeting_post_slot_buffer_minutes, sent_at + meeting_no_response_hours)`
+
+- Slot within 36h of send → releases when slot time passes (+ buffer)
+- Slot more than 36h away → releases 36h after send, regardless of slot date
+- A proposal is `expired` when all its slots are `released` — no proposal-level expiry field
+
+Dashboard urgency badge: any pending proposal with a slot starting within 24 hours shows "Meeting pending — starts in N hours".
+
+#### Stage 1 — DB schema (new tables)
+
+```sql
+CREATE TABLE compose_drafts (
+    id INTEGER PRIMARY KEY,
+    account TEXT NOT NULL,              -- financial | gmail | personal
+    to_address TEXT,
+    cc_address TEXT,
+    subject TEXT,
+    body TEXT,
+    prompt TEXT,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+-- One row per account (upsert on account). Restored when modal reopened.
+
+CREATE TABLE meeting_proposals (
+    id INTEGER PRIMARY KEY,
+    outgoing_message_id TEXT,           -- internetMessageId of sent email
+    account TEXT,
+    client_email TEXT,
+    client_name TEXT,
+    subject TEXT,
+    duration_minutes INTEGER,
+    sent_at DATETIME,
+    status TEXT DEFAULT 'pending'       -- pending | confirmed | declined | expired
+);
+
+CREATE TABLE meeting_slots (
+    id INTEGER PRIMARY KEY,
+    proposal_id INTEGER REFERENCES meeting_proposals(id),
+    slot_start DATETIME,
+    slot_end DATETIME,
+    auto_release_at DATETIME,           -- min(slot_start + buffer, sent_at + 36h), computed on send
+    owning_calendar_event_id TEXT,      -- full-detail event (Graph or Google ID)
+    mirror_event_id_financial TEXT,     -- "Hold" in M365 financial (null if owning account IS financial)
+    mirror_event_id_google_tax TEXT,    -- "Hold" in Google Calendar tax (null if owning account IS gmail)
+    status TEXT DEFAULT 'tentative'     -- tentative | confirmed | released
+);
+```
+
+New settings keys (settings table):
+
+| Key | Default | Purpose |
+|---|---|---|
+| `meeting_hours_start` | `09:00` | Business hours start (AEST) |
+| `meeting_hours_end` | `17:00` | Business hours end |
+| `meeting_buffer_minutes` | `15` | Minimum gap between meetings |
+| `meeting_default_duration` | `60` | Default slot duration (minutes) |
+| `meeting_no_response_hours` | `36` | Hours after send before holds auto-release |
+| `meeting_post_slot_buffer_minutes` | `30` | Minutes after slot start before auto-release fires |
+
+#### Stage 2 — Contact search (`/api/contacts/search?q=&account=`)
+
+- Financial: HubSpot → M365 contacts (`/me/contacts`) → sent email history
+- Tax (gmail): sent email history (Google People API deferred — needs `contacts.readonly` re-auth)
+- Personal: M365 contacts (`/users/{PERSONAL_EMAIL}/contacts`) → sent email history
+
+Returns: `[{ name, email, source }]` with source badge (HubSpot / Contacts / History)
+
+#### Stage 3 — Calendar slot discovery (`/api/calendar/free-slots?account=&duration=&from=`)
+
+Calendars queried depend on the composing account:
+
+| Composing account | Calendars checked |
+|---|---|
+| `financial` or `gmail` | M365 financial + Google Calendar tax |
+| `personal` | All three: M365 financial + Google Calendar tax + personal M365 |
+
+```
+GET /me/calendarView?startDateTime=...&endDateTime=...               (M365 financial)
+GET /calendars/primary/events?timeMin=...&timeMax=...                (Google Calendar — tax)
+GET /users/{PERSONAL_EMAIL}/calendarView?startDateTime=...&endDateTime=...  (personal — only if needed)
+```
+
+Merge all busy windows. Walk business hours to find free slots. Return top 3 of requested duration. `findMeetingTimes` not used — manual intersection is more reliable across separate providers.
+
+#### Stage 4 — Compose modal UI
+
+New **Compose** button in dashboard header. Modal sections:
+
+- **Account selector** — Financial Planning / Tax / Personal (display names; code: financial / gmail / personal)
+- **To:** — contact search autocomplete
+- **CC:** — free text, multiple addresses
+- **Subject:** — free text; auto-generated by AI if left blank
+- **Template chips** — one-click prompt starters per account (e.g. "Portfolio review", "Tax planning update", "General follow-up")
+- **Prompt:** — short instruction; populated by template chip or typed directly
+- **Meeting Proposal panel** (auto-shown on meeting intent in prompt, or manually toggled):
+  - Duration selector (15 / 30 / 45 / 60 / 90 min; default from settings)
+  - Timeframe hint ("next week", "after 20 May")
+  - Three proposed slots — pre-filled by `/api/calendar/free-slots`, individually editable
+  - Invite rule shown as read-only note: "1 slot → calendar invite; 2–3 slots → proposed in email body"
+- **Draft area** — AI-generated, fully editable
+- **Context chips** — shown after draft generation: which sources were used (HubSpot ✓ / Voice ✓ / History ✓ / Calendar ✓)
+- **Regenerate / Send** buttons
+
+#### Stage 5 — Draft generation (`/api/compose/draft`)
+
+Assembles context in parallel (same pattern as existing reply drafting):
+
+1. Account base prompt (settings table)
+2. Voice profile (voice_profiles table)
+3. HubSpot context — financial only (contact, notes, meetings, tasks)
+4. Email history with contact (Graph or Gmail sent/received)
+5. Calendar context — upcoming events with this contact
+6. Proposed meeting slots (if meeting panel active — embedded as natural prose)
+
+If subject field is blank, AI also generates a subject line. Returns: `{ draft, subject, context_sources[] }`. Context sources list fed back to UI for context chips.
+
+All context failures are silent — never block draft generation.
+
+#### Stage 6 — Send (`/api/compose/send`)
+
+**All accounts — on every send:**
+1. Call `graph_send_email` (financial, personal) or `gmail_send_email` (gmail) with to, cc, subject, body
+2. If financial account: CC `FILING_EMAIL_FINANCIAL` automatically
+3. Write to `action_log` with `status = "sent"` (appears in History tab)
+4. Auto-save draft cleared from `compose_drafts` for that account
+
+**Meeting send — for each proposed slot, immediately after email dispatch:**
+
+| Account | Owning event | mirror_event_id_financial | mirror_event_id_google_tax |
+|---|---|---|---|
+| `financial` | M365 financial — full details, `showAs: tentative` | null (IS financial) | Google Calendar — `"Hold"`, `status: tentative` |
+| `gmail` | Google Calendar — full details, `status: tentative` | M365 financial — `"Hold"`, `showAs: tentative` | null (IS gmail) |
+| `personal` | Personal M365 — full details, `showAs: tentative` | M365 financial — `"Hold"`, `showAs: tentative` | Google Calendar — `"Hold"`, `status: tentative` |
+
+If slot count == 1: include client email as attendee on owning event (triggers calendar invite).
+If slot count == 2–3: no attendees on any event (times proposed in email body only).
+
+Compute `auto_release_at = min(slot_start + meeting_post_slot_buffer_minutes, sent_at + meeting_no_response_hours)` for each slot and store in `meeting_slots`.
+
+#### Stage 7 — Response detection
+
+On incoming reply from `client_email` matching an open `meeting_proposal`: classifier adds `meeting_response` label. Email gets a calendar badge in the dashboard queue.
+
+Opening the email shows a **Meeting Response Panel**:
+- Each slot with status and time
+- AI parses reply body, pre-selects most likely accepted slot (suggestion only — not auto-confirmed)
+- Buttons: **Confirm [slot]**, **Client Declined**, **Ask Me Later**
+
+No client-facing confirmation links — server is Tailscale-only.
+
+#### Stage 8 — Confirmation / release (`/api/meeting/{proposal_id}/confirm/{slot_id}`, `/decline`)
+
+**Confirm slot X:**
+1. PATCH owning event → `showAs: "busy"` (Graph) or `status: "confirmed"` (Google)
+2. PATCH each mirror event → `showAs: "busy"` / `status: "confirmed"` (becomes a real block)
+3. DELETE owning + all mirror events for the remaining unconfirmed slots
+4. Update `meeting_slots.status` for all slots; set `meeting_proposals.status = "confirmed"`
+5. If financial: log HubSpot engagement "Meeting confirmed: [subject], [datetime]" via Engagements API
+
+Event count on delete (remaining 2 slots):
+- Financial or tax meeting: 2 slots × 2 events = 4 deleted
+- Personal meeting: 2 slots × 3 events = 6 deleted
+
+**Decline / no times accepted:**
+- DELETE all events for all slots (financial/tax: 6 events; personal: 9 events)
+- Set `meeting_proposals.status = "declined"`
+- Offer follow-up compose prompt: "Draft a reply proposing alternative times?"
+
+#### Stage 9 — Background auto-release (runs each poll cycle)
+
+```python
+# Find slots past their auto_release_at that are still tentative
+slots = await db.fetch("SELECT * FROM meeting_slots WHERE status = 'tentative' AND auto_release_at < ?", now())
+for slot in slots:
+    # Delete owning event
+    # Delete mirror events (mirror_event_id_financial, mirror_event_id_google_tax — whichever are not null)
+    await db.execute("UPDATE meeting_slots SET status = 'released' WHERE id = ?", slot.id)
+
+# Mark proposals expired when all their slots are released
+await db.execute("""
+    UPDATE meeting_proposals SET status = 'expired'
+    WHERE status = 'pending'
+    AND id NOT IN (SELECT DISTINCT proposal_id FROM meeting_slots WHERE status = 'tentative')
+""")
+```
+
+#### Stage 10 — Settings UI additions
+
+New "Meeting Proposals" section in ⚙ Settings:
+
+| Setting | UI control |
+|---|---|
+| Business hours start/end | Time pickers |
+| Buffer between meetings | Number input (minutes) |
+| Default meeting duration | Dropdown (15/30/45/60/90) |
+| No-response release window | Number input (hours; max 48) |
+| Post-slot release buffer | Number input (minutes) |
+
+No invite defaults (invite behaviour driven by slot count, not settings).
+
+#### Stage 11 — Gmail contact search (deferred post-v1)
+
+Requires re-running Gmail OAuth with `contacts.readonly` added to scope. Non-disruptive to current Gmail email. Email history is the fallback for v1 and is sufficient for most use cases.
+
+---
+
+#### Deferred items (not in v1)
+
+| Item | Reason deferred |
+|---|---|
+| Gmail contact search (Google People API) | Needs one-time Gmail re-auth to add `contacts.readonly` scope |
+| HubSpot contact creation from compose | More complex workflow; filing CC covers the logging requirement |
+| HubSpot Engagements API for compose emails | Filing CC is sufficient; Engagements API used only for confirmed meeting logging |
+
+---
+
+#### Implementation order
+
+| Stage | Depends on | Notes |
+|---|---|---|
+| 1 — DB schema | Nothing | Start here |
+| 2 — Contact search | Nothing | Parallel with 1 |
+| 3 — Calendar slot discovery | Nothing | Parallel with 1 and 2 |
+| 4 — Compose modal UI | Stage 2 | Shell can be built before draft API |
+| 5 — Draft generation | Stage 4 | |
+| 6 — Send + calendar holds | Stages 3, 5 | |
+| 7 — Response detection | Stage 6 | |
+| 8 — Confirm/release | Stage 7 | |
+| 9 — Auto-release task | Stage 6 | |
+| 10 — Settings UI | Stage 1 | |
+| 11 — Gmail contacts | Any time | Needs Gmail re-auth first |
+
+---
+
+#### Resolved decisions (reference)
+
+| # | Decision | Resolution |
+|---|---|---|
+| 1 | Client calendar invites | 1 slot → invite sent; 2–3 slots → prose in email body only |
+| 2 | Compose account scope | All three accounts; auto-suggested, always user-overridable |
+| 2a | Personal meeting cross-blocking | Personal meetings block both business calendars |
+| 3 | Duration defaults and auto-release | 60 min default; `min(slot_start + 30min, sent_at + 36h)` |
+| 4 | Personal account send | Full capability; `Mail.Send` application permission already granted |
+| 5 | HubSpot engagement logging | Filing CC sufficient; no Engagements API for compose sends |
+| 6 | Draft persistence | Saved to `compose_drafts` table; restored on modal reopen |
+| 7 | v1 feature scope | Template chips, context chips, subject auto-gen, CC field included; HubSpot contact creation deferred |
+| 8 | History logging | Composed emails appear in History tab via `action_log` with `status = "sent"` |
