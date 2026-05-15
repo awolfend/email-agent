@@ -36,6 +36,12 @@ async def _hard_delete_email(account: str, email_id: str, subject: str):
             await hard_delete_email(email_id)
         logger.info(f"[{account}] HARD DELETED spam: {subject[:50]}")
         return ("deleted", "deleted")
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 404:
+            logger.info(f"[{account}] Spam already gone (404) — treating as deleted: {subject[:50]}")
+            return ("deleted_externally", "deleted")
+        logger.error(f"[{account}] Failed to hard delete {email_id}: {e}")
+        return ("delete_failed", "pending")
     except Exception as e:
         logger.error(f"[{account}] Failed to hard delete {email_id}: {e}")
         return ("delete_failed", "pending")

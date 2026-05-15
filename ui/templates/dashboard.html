@@ -1814,7 +1814,7 @@
                     <input type="text" class="compose-slot-input" id="compose-slot-2" placeholder="Optional third slot…" oninput="composeDraftAutoSave()" />
                 </div>
             </div>
-            <div class="compose-invite-note">1 slot → calendar invite sent with email &nbsp;·&nbsp; 2–3 slots → times listed in email body only</div>
+            <div class="compose-invite-note">Use <strong>Find Slots</strong> to block calendar holds — manually typed text is included in the email but won't reserve times</div>
         </div>
 
         <div class="compose-section-label" id="compose-draft-label" style="display:none;">Draft</div>
@@ -2989,7 +2989,9 @@
         composeAccount = preAccount || 'financial';
         document.getElementById('compose-overlay').classList.add('show');
         const today = new Date().toISOString().split('T')[0];
-        document.getElementById('compose-from-date').value = today;
+        const fromDateEl = document.getElementById('compose-from-date');
+        fromDateEl.min = today;
+        fromDateEl.value = today;
         _activateComposeTab(composeAccount);
         populateComposeTemplates(composeAccount);
         _loadComposeDraftState(composeAccount);

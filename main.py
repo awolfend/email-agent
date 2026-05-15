@@ -100,7 +100,7 @@ def extract_email_addresses(raw: str) -> list[str]:
             continue
         match = re.search(r'<([^>]+)>', part)
         addresses.append(match.group(1).strip() if match else part)
-    return [a for a in addresses if a]
+    return [a for a in addresses if a and "@" in a and "." in a.split("@")[-1]]
 
 
 @asynccontextmanager
@@ -323,15 +323,14 @@ async def api_unarchive(email_id: str):
             # Look up the current folder-scoped ID via the stable internetMessageId.
             live_id = await graph_get_message_id(email["account"], email_id)
             if not live_id:
-                raise Exception("Message not found in mailbox — may have been permanently deleted")
+                return JSONResponse({"ok": False, "error": "Message not found in mailbox — may have been permanently deleted"}, status_code=404)
             await graph_unarchive_email(email["account"], live_id)
         elif email["account"] == "gmail":
             await gmail_unarchive_email(email_id)
         await update_email_status(email_id, "pending")
         return {"ok": True}
     except Exception as e:
-        await update_email_status(email_id, "pending")
-        return {"ok": True, "warning": str(e)}
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
 
 @app.post("/api/email/{email_id}/calendar/accept")
 async def api_calendar_accept(email_id: str):
@@ -839,15 +838,20 @@ def _find_free_slots(
     bh_start = tuple(int(x) for x in biz_start_str.split(":"))
     bh_end   = tuple(int(x) for x in biz_end_str.split(":"))
 
+    now  = datetime.now(BRISBANE)
+    today = now.date()
+
     if from_date:
         try:
             start_date = datetime.strptime(from_date, "%Y-%m-%d").date()
+            if start_date < today:
+                start_date = today  # never return past-day slots
             day_offset_start = 0
         except ValueError:
-            start_date = datetime.now(BRISBANE).date()
+            start_date = today
             day_offset_start = 1
     else:
-        start_date = datetime.now(BRISBANE).date()
+        start_date = today
         day_offset_start = 1
 
     slots = []
@@ -861,6 +865,12 @@ def _find_free_slots(
         biz_end   = datetime(day.year, day.month, day.day, bh_end[0],   bh_end[1],   tzinfo=BRISBANE)
 
         t = biz_start
+        if day == today:
+            # Don't offer slots that have already started — snap to now + round up to 15 min
+            if now > t:
+                rem = (now.hour * 60 + now.minute) % 15
+                snap = now + (timedelta(minutes=15 - rem) if rem else timedelta())
+                t = snap.replace(second=0, microsecond=0)
         while t + duration <= biz_end:
             slot_end = t + duration
 

@@ -147,6 +147,17 @@ async def init_db():
                 status TEXT DEFAULT 'tentative'
             )
         """)
+        # Schema migrations — additive only, safe to run every startup
+        for stmt in [
+            "ALTER TABLE meeting_proposals ADD COLUMN direction TEXT DEFAULT 'outbound'",
+            "ALTER TABLE meeting_proposals ADD COLUMN triggering_email_id TEXT",
+            "ALTER TABLE meeting_slots ADD COLUMN proposed_by TEXT DEFAULT 'us'",
+        ]:
+            try:
+                await db.execute(stmt)
+            except aiosqlite.OperationalError:
+                pass  # column already exists
+
         # Seed meeting settings defaults (INSERT OR IGNORE — never overwrite user values)
         for key, value in [
             ("meeting_hours_start", "09:00"),
@@ -618,13 +629,16 @@ async def clear_compose_draft(account: str):
 
 async def save_meeting_proposal(outgoing_message_id: str, account: str, client_email: str,
                                  client_name: str, subject: str, duration_minutes: int,
-                                 sent_at: str) -> int:
+                                 sent_at: str, direction: str = "outbound",
+                                 triggering_email_id: str = None) -> int:
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute("""
             INSERT INTO meeting_proposals
-                (outgoing_message_id, account, client_email, client_name, subject, duration_minutes, sent_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, (outgoing_message_id, account, client_email, client_name, subject, duration_minutes, sent_at))
+                (outgoing_message_id, account, client_email, client_name, subject,
+                 duration_minutes, sent_at, direction, triggering_email_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (outgoing_message_id, account, client_email, client_name, subject,
+              duration_minutes, sent_at, direction, triggering_email_id))
         await db.commit()
         return cursor.lastrowid
 
@@ -666,15 +680,18 @@ async def update_proposal_status(proposal_id: int, status: str):
 async def save_meeting_slot(proposal_id: int, slot_start: str, slot_end: str,
                              auto_release_at: str, owning_calendar_event_id: str = None,
                              mirror_event_id_financial: str = None,
-                             mirror_event_id_google_tax: str = None) -> int:
+                             mirror_event_id_google_tax: str = None,
+                             proposed_by: str = "us") -> int:
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute("""
             INSERT INTO meeting_slots
                 (proposal_id, slot_start, slot_end, auto_release_at,
-                 owning_calendar_event_id, mirror_event_id_financial, mirror_event_id_google_tax)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+                 owning_calendar_event_id, mirror_event_id_financial, mirror_event_id_google_tax,
+                 proposed_by)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """, (proposal_id, slot_start, slot_end, auto_release_at,
-              owning_calendar_event_id, mirror_event_id_financial, mirror_event_id_google_tax))
+              owning_calendar_event_id, mirror_event_id_financial, mirror_event_id_google_tax,
+              proposed_by))
         await db.commit()
         return cursor.lastrowid
 
