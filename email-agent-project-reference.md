@@ -26,7 +26,7 @@ Goal: AI agent running on a local Mac mini that autonomously manages email triag
 | macOS | 26.4.1 |
 | RAM allocated to this project | 32 GB maximum |
 | Package managers installed | Homebrew 5.1.9, npm 11.12.1, pip 26.1 |
-| Python | 3.14.4 installed via Homebrew — use `python3` and `pip3` |
+| Python | 3.14.5 installed via Homebrew — use `python3` and `pip3` |
 | Node | 25.9.0 installed via Homebrew |
 | Ollama | 0.23.0 — runs as Mac App Store menu bar app, NOT a brew service |
 | Shell | zsh |
@@ -344,7 +344,15 @@ Today's goal: [one sentence]
 
 ## 11. Current state (update this after every session)
 
-**Last updated:** 2026-05-10 (session 5). Major reliability and correctness pass across all three connectors and the entire action pipeline. All known bugs from the audit are fixed. System is feature-complete and stable.
+**Last updated:** 2026-05-15 (session 6). Bug-fix session — two runtime failures resolved, server hardened against Python upgrades.
+
+### What changed in session 6
+
+1. **Gmail send failing with "No module named 'email.generator'"** — Homebrew upgraded Python from 3.14.4 to 3.14.5, removing the old installation. The server process was started on 3.14.4 and still held a reference to the deleted stdlib path. `email.generator` is lazy-imported the first time `MIMEText.as_bytes()` is called — so module load succeeded but the first Gmail send failed. Fix: restarted the server on 3.14.5 (via launchd restart). Python version in section 2 updated to 3.14.5.
+
+2. **`VOICE_PROFILE_BLOCK` NameError on server startup** — commit `f4b9311` (Move hardcoded author name into env vars) converted `VOICE_PROFILE_BLOCK` from a plain string to an f-string to interpolate `{_AUTHOR_FIRST}`, but left `{profile}` unescaped. Python evaluated `{profile}` as a variable reference at module load time — `profile` is not defined at module scope, only inside `_get_voice_block()`. This caused `NameError: name 'profile' is not defined` every time the server started, meaning any server restart would fail. Fixed by escaping as `{{profile}}` so it remains a `.format()` placeholder for `_get_voice_block()` to fill in at call time.
+
+3. **`email-agent-server` binding to `0.0.0.0`** — the launchd startup script used `--host 0.0.0.0`, violating the project rule (Tailscale IP only). After the launchd-triggered restart, the server was exposed on all interfaces. Fixed: script now resolves the Tailscale IP dynamically at startup via `tailscale ip -4`, falling back to `127.0.0.1`. Server restarted and confirmed binding to `100.100.150.128:8000`.
 
 ### What changed in session 5
 
@@ -443,7 +451,7 @@ Today's goal: [one sentence]
 - `GEMINI_API_KEY` not yet set (deferred — Claude + OpenAI fallback covers all draft needs)
 - **Silent deletion failure** — `api_delete` catches all exceptions and returns `{"ok": True}` even if the Graph/Gmail delete call failed. DB status is still updated to 'deleted'. Low frequency but misleading.
 - **Hardcoded folder names** — "Junk Email", "Newsletters", "Notifications" in `actions.py`. If a mailbox uses different names, autonomous moves silently fail (email stays pending). Not a current problem.
-- **Send flow unconfirmed (Gmail)** — user reported clicking Send on a Gmail email produced no outbox entry. DB shows `status='sent'` so the code path completed without exception. Root cause unconfirmed; user was going to retry.
+- **Send flow (Gmail) — resolved** — root cause was Python 3.14.4 being removed by Homebrew while the server was still running on it. `email.generator` is lazy-imported on the first `MIMEText.as_bytes()` call; that import failed after the old Python was deleted. Fixed by restarting the server on 3.14.5 (session 6).
 - **`stub` column** — exists in schema and filters queries (`WHERE stub = 0`) but is never set to 1. Dead column, harmless.
 
 **All files:**
