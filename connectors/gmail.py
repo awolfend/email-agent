@@ -1,12 +1,17 @@
 import os
 import json
+import logging
+import tempfile
 import httpx
 import base64
 import re
 from datetime import datetime, timedelta, timezone
-from email.utils import parseaddr
+from email.utils import parseaddr, parsedate_to_datetime
 from dotenv import load_dotenv
 from email.mime.text import MIMEText
+from connectors.utils import strip_html
+
+logger = logging.getLogger(__name__)
 
 load_dotenv("config/.env")
 
@@ -40,8 +45,11 @@ def load_tokens() -> dict:
 
 
 def save_tokens(tokens: dict):
-    with open(TOKEN_FILE, "w") as f:
+    dir_ = os.path.dirname(TOKEN_FILE)
+    with tempfile.NamedTemporaryFile("w", dir=dir_, delete=False, suffix=".tmp") as f:
         json.dump(tokens, f, indent=2)
+        tmp = f.name
+    os.replace(tmp, TOKEN_FILE)
 
 
 def get_auth_url() -> str:
@@ -123,22 +131,6 @@ async def get_valid_token() -> str:
     return token_data["access_token"]
 
 
-def strip_html(html: str) -> str:
-    text = re.sub(r'<style[^>]*>.*?</style>', '', html, flags=re.DOTALL)
-    text = re.sub(r'<script[^>]*>.*?</script>', '', text, flags=re.DOTALL)
-    text = re.sub(r'<br\s*/?>', '\n', text)
-    text = re.sub(r'<p[^>]*>', '\n', text)
-    text = re.sub(r'</p>', '', text)
-    text = re.sub(r'<[^>]+>', '', text)
-    text = re.sub(r'&nbsp;', ' ', text)
-    text = re.sub(r'&amp;', '&', text)
-    text = re.sub(r'&lt;', '<', text)
-    text = re.sub(r'&gt;', '>', text)
-    text = re.sub(r'&quot;', '"', text)
-    text = re.sub(r'\n{3,}', '\n\n', text)
-    return text.strip()
-
-
 def extract_body_from_payload(payload: dict) -> str:
     mime_type = payload.get("mimeType", "")
     body_data = payload.get("body", {}).get("data", "")
@@ -166,11 +158,8 @@ def extract_body_from_payload(payload: dict) -> str:
     return ""
 
 
-async def get_emails(count: int = None) -> list:
-    """
-    Fetch ALL messages currently in the inbox by following pagination.
-    The count parameter is ignored — full inbox is always returned.
-    """
+async def get_emails() -> list:
+    """Fetch all messages currently in the inbox by following pagination."""
     token = await get_valid_token()
     all_message_ids = []
 
@@ -310,7 +299,6 @@ async def get_email_history(address: str, limit: int = 8) -> list[dict]:
                 direction = "←" if address.lower() in from_hdr else "→"
                 raw_date  = headers.get("Date", "")
                 try:
-                    from email.utils import parsedate_to_datetime
                     date = parsedate_to_datetime(raw_date).strftime("%Y-%m-%d")
                 except Exception:
                     date = raw_date[:10]
@@ -426,7 +414,6 @@ async def send_email(to: str, subject: str, body: str,
         if not response.is_success:
             raise Exception(f"Gmail send failed {response.status_code}: {response.text}")
         msg_id = response.json().get("id", "")
-        import logging
         logging.getLogger(__name__).info(f"[gmail] sent message id={msg_id} thread={thread_id}")
         return msg_id
 
@@ -438,6 +425,7 @@ async def get_or_create_label(label_name: str) -> str:
             f"{GMAIL_BASE}/labels",
             headers={"Authorization": f"Bearer {token}"},
         )
+        response.raise_for_status()
         labels = response.json().get("labels", [])
         for label in labels:
             if label["name"].lower() == label_name.lower():
@@ -575,7 +563,6 @@ async def get_busy_windows(start_dt: datetime, end_dt: datetime) -> list[tuple]:
             busy.append((s_dt, e_dt))
         return busy
     except Exception as e:
-        import logging
         logging.getLogger(__name__).debug(f"gmail get_busy_windows failed: {e}")
         return []
 
@@ -605,7 +592,6 @@ async def create_calendar_hold(start_iso: str, end_iso: str, title: str = "Hold"
             resp.raise_for_status()
             return resp.json().get("id", "")
     except Exception as e:
-        import logging
         logging.getLogger(__name__).warning(f"gmail create_calendar_hold failed: {e}")
         return ""
 
@@ -638,7 +624,6 @@ async def create_confirmed_event(start_iso: str, end_iso: str,
             resp.raise_for_status()
             return resp.json().get("id", "")
     except Exception as e:
-        import logging
         logging.getLogger(__name__).warning(f"gmail create_confirmed_event failed: {e}")
         return ""
 
@@ -654,7 +639,6 @@ async def delete_calendar_event(event_id: str) -> bool:
             )
             return resp.status_code in (200, 204)
     except Exception as e:
-        import logging
         logging.getLogger(__name__).warning(f"gmail delete_calendar_event failed: {e}")
         return False
 

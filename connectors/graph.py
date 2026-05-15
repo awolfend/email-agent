@@ -1,9 +1,14 @@
 import os
+import logging
 import httpx
 import json
 import re
+import tempfile
 from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
+from connectors.utils import strip_html
+
+logger = logging.getLogger(__name__)
 
 load_dotenv("config/.env")
 
@@ -14,7 +19,6 @@ CLIENT_SECRET_PERSONAL = os.getenv("AZURE_CLIENT_SECRET_PERSONAL")
 TENANT_ID = os.getenv("AZURE_TENANT_ID")
 PERSONAL_EMAIL = os.getenv("PERSONAL_EMAIL")
 
-TAILSCALE_IP = os.getenv("TAILSCALE_IP", "localhost")
 AUTHORITY = f"https://login.microsoftonline.com/{TENANT_ID}"
 SCOPES = "Mail.ReadWrite Mail.Send Calendars.ReadWrite User.Read offline_access"
 GRAPH_BASE = "https://graph.microsoft.com/v1.0"
@@ -30,8 +34,11 @@ def load_tokens() -> dict:
 
 
 def save_tokens(tokens: dict):
-    with open(TOKEN_FILE, "w") as f:
+    dir_ = os.path.dirname(TOKEN_FILE)
+    with tempfile.NamedTemporaryFile("w", dir=dir_, delete=False, suffix=".tmp") as f:
         json.dump(tokens, f, indent=2)
+        tmp = f.name
+    os.replace(tmp, TOKEN_FILE)
 
 
 def _mailbox_base(account: str) -> str:
@@ -85,6 +92,8 @@ async def exchange_code_for_token(code: str, account: str) -> dict:
 
 
 async def refresh_token(account: str) -> dict:
+    if account != "financial":
+        raise Exception(f"refresh_token called for non-delegated account: {account}")
     tokens = load_tokens()
     token_data = tokens.get(account)
     if not token_data:
@@ -159,23 +168,7 @@ async def get_valid_token(account: str) -> str:
     return token_data["access_token"]
 
 
-def strip_html(html: str) -> str:
-    text = re.sub(r'<style[^>]*>.*?</style>', '', html, flags=re.DOTALL)
-    text = re.sub(r'<script[^>]*>.*?</script>', '', text, flags=re.DOTALL)
-    text = re.sub(r'<br\s*/?>', '\n', text)
-    text = re.sub(r'<p[^>]*>', '\n', text)
-    text = re.sub(r'</p>', '', text)
-    text = re.sub(r'<[^>]+>', '', text)
-    text = re.sub(r'&nbsp;', ' ', text)
-    text = re.sub(r'&amp;', '&', text)
-    text = re.sub(r'&lt;', '<', text)
-    text = re.sub(r'&gt;', '>', text)
-    text = re.sub(r'&quot;', '"', text)
-    text = re.sub(r'\n{3,}', '\n\n', text)
-    return text.strip()
-
-
-async def get_emails(account: str, count: int = None) -> list:
+async def get_emails(account: str) -> list:
     token = await get_valid_token(account)
     base = _mailbox_base(account)
     all_emails = []

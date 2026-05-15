@@ -13,6 +13,7 @@ import re
 from datetime import datetime, timezone
 
 import httpx
+from connectors.utils import strip_html as _strip_html
 
 logger = logging.getLogger(__name__)
 
@@ -37,13 +38,6 @@ def _ms_to_date(ms) -> str:
         return datetime.fromtimestamp(int(ms) / 1000, tz=timezone.utc).strftime("%Y-%m-%d")
     except Exception:
         return ""
-
-
-def _strip_html(text: str) -> str:
-    """Remove HTML tags and decode common entities."""
-    text = re.sub(r"<[^>]+>", " ", text)
-    text = text.replace("&nbsp;", " ").replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">")
-    return re.sub(r"\s+", " ", text).strip()
 
 
 async def _search_contact(client: httpx.AsyncClient, email: str) -> tuple[str | None, dict]:

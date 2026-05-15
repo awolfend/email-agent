@@ -2,8 +2,8 @@ import asyncio
 import logging
 from email.utils import parsedate_to_datetime, parseaddr
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from connectors.graph import get_emails as graph_get_emails
-from connectors.gmail import get_emails as gmail_get_emails
+from connectors.graph import get_emails as graph_get_emails, delete_calendar_event as graph_delete_event
+from connectors.gmail import get_emails as gmail_get_emails, delete_calendar_event as gmail_delete_event
 from agent.classifier import classify_email
 from agent.actions import execute_action
 from db.database import log_action, get_email_by_id, update_email_status, ensure_inbox_state, mark_missing_as_archived, set_auth_error, clear_auth_error, prune_old_records, get_sender_rule, get_open_proposals_for_client, get_expired_tentative_slots, update_slot_status, expire_completed_proposals
@@ -132,52 +132,32 @@ async def _process_emails(account: str, emails: list, normalize_fn) -> set:
     return inbox_ids
 
 
-async def poll_financial():
-    logger.info("Polling financial inbox (full)...")
+async def _poll_account(account: str, fetch_fn, normalize_fn):
+    logger.info(f"Polling {account} inbox (full)...")
     try:
-        emails = await graph_get_emails("financial")
-        logger.info(f"[financial] Found {len(emails)} emails in inbox")
-        inbox_ids = await _process_emails("financial", emails, _normalize_graph_email)
-        missing = await mark_missing_as_archived("financial", inbox_ids)
+        emails = await fetch_fn() if account == "gmail" else await fetch_fn(account)
+        logger.info(f"[{account}] Found {len(emails)} emails in inbox")
+        inbox_ids = await _process_emails(account, emails, normalize_fn)
+        missing = await mark_missing_as_archived(account, inbox_ids)
         if missing:
-            logger.info(f"[financial] Reconciled {len(missing)} emails no longer in inbox")
-        await clear_auth_error("financial")
+            logger.info(f"[{account}] Reconciled {len(missing)} emails no longer in inbox")
+        await clear_auth_error(account)
     except Exception as e:
-        logger.error(f"Error polling financial inbox: {e}")
+        logger.error(f"Error polling {account} inbox: {e}")
         if any(k in str(e) for k in _AUTH_KEYWORDS):
-            await set_auth_error("financial", str(e))
+            await set_auth_error(account, str(e))
+
+
+async def poll_financial():
+    await _poll_account("financial", graph_get_emails, _normalize_graph_email)
 
 
 async def poll_gmail():
-    logger.info("Polling Gmail inbox (full)...")
-    try:
-        emails = await gmail_get_emails()
-        logger.info(f"[gmail] Found {len(emails)} emails in inbox")
-        inbox_ids = await _process_emails("gmail", emails, _normalize_gmail_email)
-        missing = await mark_missing_as_archived("gmail", inbox_ids)
-        if missing:
-            logger.info(f"[gmail] Reconciled {len(missing)} emails no longer in inbox")
-        await clear_auth_error("gmail")
-    except Exception as e:
-        logger.error(f"Error polling Gmail inbox: {e}")
-        if any(k in str(e) for k in _AUTH_KEYWORDS):
-            await set_auth_error("gmail", str(e))
+    await _poll_account("gmail", gmail_get_emails, _normalize_gmail_email)
 
 
 async def poll_personal():
-    logger.info("Polling personal inbox (full)...")
-    try:
-        emails = await graph_get_emails("personal")
-        logger.info(f"[personal] Found {len(emails)} emails in inbox")
-        inbox_ids = await _process_emails("personal", emails, _normalize_graph_email)
-        missing = await mark_missing_as_archived("personal", inbox_ids)
-        if missing:
-            logger.info(f"[personal] Reconciled {len(missing)} emails no longer in inbox")
-        await clear_auth_error("personal")
-    except Exception as e:
-        logger.error(f"Error polling personal inbox: {e}")
-        if any(k in str(e) for k in _AUTH_KEYWORDS):
-            await set_auth_error("personal", str(e))
+    await _poll_account("personal", graph_get_emails, _normalize_graph_email)
 
 
 async def poll_all():
@@ -193,9 +173,6 @@ async def release_expired_slots():
     mark them declined, then expire proposals that have no remaining tentative slots.
     """
     try:
-        from connectors.graph import delete_calendar_event as graph_delete_event
-        from connectors.gmail import delete_calendar_event as gmail_delete_event
-
         expired = await get_expired_tentative_slots()
         if not expired:
             return

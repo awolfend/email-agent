@@ -1,10 +1,12 @@
 import aiosqlite
 import os
+from datetime import datetime, timezone, timedelta
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "..", "config", "agent.db")
 
 async def init_db():
     async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("PRAGMA journal_mode=WAL")
         await db.execute("""
             CREATE TABLE IF NOT EXISTS sent_examples (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -21,7 +23,7 @@ async def init_db():
             await db.execute(
                 "CREATE UNIQUE INDEX IF NOT EXISTS idx_sent_example_msg_id ON sent_examples (message_id)"
             )
-        except Exception:
+        except aiosqlite.OperationalError:
             pass
         await db.execute("""
             CREATE TABLE IF NOT EXISTS voice_profiles (
@@ -65,13 +67,13 @@ async def init_db():
         ]:
             try:
                 await db.execute(f"ALTER TABLE action_log ADD COLUMN {col} {definition}")
-            except Exception:
+            except aiosqlite.OperationalError:
                 pass
         try:
             await db.execute(
                 "CREATE UNIQUE INDEX IF NOT EXISTS idx_email_id ON action_log (email_id)"
             )
-        except Exception:
+        except aiosqlite.OperationalError:
             pass
         await db.execute("""
             CREATE TABLE IF NOT EXISTS settings (
@@ -105,7 +107,7 @@ async def init_db():
                 "CREATE UNIQUE INDEX IF NOT EXISTS idx_filing_domain_folder "
                 "ON filing_history (sender_domain, target_folder_id)"
             )
-        except Exception:
+        except aiosqlite.OperationalError:
             pass
         await db.execute("""
             CREATE TABLE IF NOT EXISTS compose_drafts (
@@ -166,7 +168,6 @@ async def log_action(account: str, email_id: str, subject: str, sender: str,
                      body: str = None, received_at: str = None,
                      graph_id: str = None, thread_id: str = None,
                      orig_message_id: str = None):
-    from datetime import datetime, timezone
     timestamp = datetime.now(timezone.utc).isoformat()
     async with aiosqlite.connect(DB_PATH) as db:
         existing = await db.execute(
@@ -323,7 +324,6 @@ async def delete_record(email_id: str):
 
 async def prune_old_records(days: int = 90) -> int:
     """Delete non-pending records older than `days` days. Returns count deleted."""
-    from datetime import datetime, timezone, timedelta
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute(
@@ -355,7 +355,6 @@ async def clear_history(scope: str) -> int:
 
 
 async def save_sent_example(account: str, message_id: str, subject: str, body: str, sent_at: str = None) -> bool:
-    from datetime import datetime, timezone
     imported_at = datetime.now(timezone.utc).isoformat()
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute(
@@ -378,7 +377,6 @@ async def get_all_sent_examples(account: str) -> list:
 
 
 async def save_voice_profile(account: str, profile: str, example_count: int):
-    from datetime import datetime, timezone
     generated_at = datetime.now(timezone.utc).isoformat()
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
@@ -461,7 +459,6 @@ async def upsert_sender_rule(sender: str, classification: str, source: str = 'ma
     """
     if not sender or source != 'manual' or classification in ('error', 'unknown', ''):
         return
-    from datetime import datetime, timezone
     now = datetime.now(timezone.utc).isoformat()
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
@@ -528,7 +525,6 @@ async def clear_all_sender_rules() -> int:
 
 
 async def record_filing(sender_domain: str, target_account: str, target_folder_id: str, target_folder_name: str):
-    from datetime import datetime, timezone
     now = datetime.now(timezone.utc).isoformat()
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("""
@@ -584,7 +580,6 @@ async def get_filing_suggestions(sender_domain: str, limit: int = 5) -> list:
 
 async def save_compose_draft(account: str, to_address: str = None, cc_address: str = None,
                               subject: str = None, body: str = None, prompt: str = None):
-    from datetime import datetime, timezone
     now = datetime.now(timezone.utc).isoformat()
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("""
@@ -664,15 +659,6 @@ async def update_proposal_status(proposal_id: int, status: str):
         await db.commit()
 
 
-async def get_all_pending_proposals() -> list:
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute(
-            "SELECT * FROM meeting_proposals WHERE status = 'pending' ORDER BY sent_at DESC"
-        ) as cursor:
-            return [dict(r) for r in await cursor.fetchall()]
-
-
 # ---------------------------------------------------------------------------
 # meeting_slots
 # ---------------------------------------------------------------------------
@@ -713,7 +699,6 @@ async def update_slot_status(slot_id: int, status: str):
 
 async def get_expired_tentative_slots() -> list:
     """Return tentative slots whose auto_release_at has passed — for background expiry task."""
-    from datetime import datetime, timezone
     now = datetime.now(timezone.utc).isoformat()
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row

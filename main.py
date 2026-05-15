@@ -1,15 +1,19 @@
 import asyncio
+import os
+import re
+import socket
+import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
+from urllib.parse import unquote
+from zoneinfo import ZoneInfo
+from dotenv import load_dotenv
 from fastapi import FastAPI, Request
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import RedirectResponse, HTMLResponse, JSONResponse
 from pydantic import BaseModel
 import uvicorn
-import re
-import os
-from dotenv import load_dotenv
 from connectors.graph import (
     get_auth_url as graph_auth_url,
     exchange_code_for_token as graph_exchange,
@@ -28,6 +32,12 @@ from connectors.graph import (
     file_to_folder as graph_file_to_folder,
     export_mime as graph_export_mime,
     import_mime as graph_import_mime,
+    get_email_history as graph_email_history,
+    search_contacts as graph_search_contacts,
+    get_busy_windows as graph_get_busy_windows,
+    create_calendar_hold as graph_create_hold,
+    delete_calendar_event as graph_delete_event,
+    create_confirmed_event as graph_create_confirmed,
 )
 from connectors.gmail import (
     get_auth_url as gmail_auth_url,
@@ -46,6 +56,11 @@ from connectors.gmail import (
     export_mime as gmail_export_mime,
     import_mime as gmail_import_mime,
     search_contacts as gmail_search_contacts,
+    get_email_history as gmail_email_history,
+    get_busy_windows as gmail_get_busy_windows,
+    create_calendar_hold as gmail_create_hold,
+    delete_calendar_event as gmail_delete_event,
+    create_confirmed_event as gmail_create_confirmed,
 )
 from db.database import (
     init_db, get_queue, get_stats,
@@ -69,21 +84,6 @@ from agent.poller import start_scheduler, poll_all
 from agent.drafter import generate_draft, generate_compose_draft
 from agent.learner import build_voice_profiles
 from connectors.hubspot import get_contact_context as hubspot_context, search_contacts as hubspot_search_contacts
-from connectors.graph import (
-    get_email_history as graph_email_history,
-    search_contacts as graph_search_contacts,
-    get_busy_windows as graph_get_busy_windows,
-    create_calendar_hold as graph_create_hold,
-    delete_calendar_event as graph_delete_event,
-    create_confirmed_event as graph_create_confirmed,
-)
-from connectors.gmail import (
-    get_email_history as gmail_email_history,
-    get_busy_windows as gmail_get_busy_windows,
-    create_calendar_hold as gmail_create_hold,
-    delete_calendar_event as gmail_delete_event,
-    create_confirmed_event as gmail_create_confirmed,
-)
 
 load_dotenv("config/.env")
 
@@ -280,14 +280,15 @@ async def api_send_followup(email_id: str, body: SendRequest):
     recipients = extract_email_addresses(body.to)
     if not recipients:
         return JSONResponse({"ok": False, "error": "No valid recipient address"}, status_code=400)
-    to = ", ".join(recipients)
     try:
         if email["account"] in ("financial", "personal"):
             _filing_email = os.getenv("FILING_EMAIL_FINANCIAL")
             cc = [_filing_email] if email["account"] == "financial" and _filing_email else None
             await graph_send_email(email["account"], recipients, body.subject, body.body, cc=cc)
         elif email["account"] == "gmail":
-            await gmail_send_email(to, body.subject, body.body)
+            await gmail_send_email(", ".join(recipients), body.subject, body.body)
+        else:
+            return JSONResponse({"ok": False, "error": f"Unknown account: {email['account']}"}, status_code=400)
         await update_draft_reply(email_id, body.body)
         return {"ok": True}
     except Exception as e:
@@ -370,7 +371,6 @@ async def api_calendar_decline(email_id: str):
 
 @app.get("/api/folders")
 async def api_list_folders():
-    import asyncio
     results = await asyncio.gather(
         graph_list_folders("financial"),
         graph_list_folders("personal"),
@@ -579,7 +579,6 @@ async def api_compose_send(body: ComposeSendRequest):
         return JSONResponse({"ok": False, "error": f"Send failed: {e}"}, status_code=500)
 
     # ---- Log to action_log so it appears in History > Sent ----
-    import uuid
     compose_id = f"compose-{uuid.uuid4().hex[:16]}"
     await log_action(
         account=account,
@@ -832,8 +831,6 @@ def _find_free_slots(
     All busy_windows must be UTC-aware (datetime, datetime) tuples.
     Returned slots are ISO strings in Australia/Brisbane time.
     """
-    from zoneinfo import ZoneInfo
-    from datetime import date as date_type
     BRISBANE = ZoneInfo("Australia/Brisbane")
 
     duration = timedelta(minutes=duration_min)
@@ -905,7 +902,6 @@ async def api_calendar_free_slots(
     personal: checks all three calendars.
     Returns up to 3 slot objects with ISO start/end strings (Brisbane time).
     """
-    from zoneinfo import ZoneInfo
     BRISBANE = ZoneInfo("Australia/Brisbane")
 
     biz_start  = await get_setting("meeting_hours_start")  or "09:00"
@@ -1045,14 +1041,12 @@ async def api_clear_sender_rules():
 
 @app.delete("/api/sender-rules/{sender:path}")
 async def api_delete_sender_rule(sender: str):
-    from urllib.parse import unquote
     deleted = await delete_sender_rule(unquote(sender))
     return {"ok": deleted}
 
 
 @app.post("/api/poll")
 async def api_poll():
-    import asyncio
     asyncio.create_task(poll_all())
     return {"ok": True}
 
@@ -1105,7 +1099,6 @@ async def api_voice_status():
 
 @app.post("/api/voice/build")
 async def api_build_voice():
-    import asyncio
     asyncio.create_task(build_voice_profiles())
     return {"ok": True}
 

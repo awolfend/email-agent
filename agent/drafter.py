@@ -2,6 +2,7 @@ import os
 import httpx
 import logging
 from dotenv import load_dotenv
+from db.database import get_setting
 
 load_dotenv("config/.env")
 
@@ -128,7 +129,6 @@ async def _get_voice_block(account: str) -> str:
 
 async def _get_base_prompt(account: str) -> str:
     try:
-        from db.database import get_setting
         stored = await get_setting(f"prompt_{account}")
         if stored:
             return stored
@@ -143,7 +143,6 @@ async def _get_base_prompt(account: str) -> str:
 
 async def _get_footer(account: str) -> str:
     try:
-        from db.database import get_setting
         stored = await get_setting(f"footer_{account}")
         return stored or ""
     except Exception as e:
