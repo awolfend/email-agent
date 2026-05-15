@@ -1872,7 +1872,9 @@
         if (email) email.status = 'deleted';
         selectNextEmail(doneId);
         renderQueue();
-        await fetch(`/api/email/${doneId}/delete`, { method: 'POST' });
+        const res = await fetch(`/api/email/${doneId}/delete`, { method: 'POST' });
+        const data = await res.json();
+        if (data.warning) showToast(`Deleted locally — mailbox warning: ${data.warning}`);
         await loadQueue();
     }
 

@@ -251,7 +251,9 @@ async def api_send_followup(email_id: str, body: SendRequest):
     to = ", ".join(recipients)
     try:
         if email["account"] in ("financial", "personal"):
-            await graph_send_email(email["account"], recipients, body.subject, body.body)
+            _filing_email = os.getenv("FILING_EMAIL_FINANCIAL")
+            cc = [_filing_email] if email["account"] == "financial" and _filing_email else None
+            await graph_send_email(email["account"], recipients, body.subject, body.body, cc=cc)
         elif email["account"] == "gmail":
             await gmail_send_email(to, body.subject, body.body)
         await update_draft_reply(email_id, body.body)

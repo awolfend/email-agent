@@ -377,22 +377,22 @@ async def mark_as_read(account: str, email_id: str):
         response.raise_for_status()
 
 
-async def send_email(account: str, to: str | list, subject: str, body: str):
+async def send_email(account: str, to: str | list, subject: str, body: str, cc: list[str] = None):
     token = await get_valid_token(account)
     addresses = to if isinstance(to, list) else [to]
     recipients = [{"emailAddress": {"address": a}} for a in addresses]
+    message = {
+        "subject": subject,
+        "body": {"contentType": "Text", "content": body},
+        "toRecipients": recipients,
+    }
+    if cc:
+        message["ccRecipients"] = [{"emailAddress": {"address": a}} for a in cc]
     async with httpx.AsyncClient() as client:
         response = await client.post(
             f"{_mailbox_base(account)}/sendMail",
             headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
-            json={
-                "message": {
-                    "subject": subject,
-                    "body": {"contentType": "Text", "content": body},
-                    "toRecipients": recipients,
-                },
-                "saveToSentItems": True,
-            },
+            json={"message": message, "saveToSentItems": True},
         )
         response.raise_for_status()
 
