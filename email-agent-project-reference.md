@@ -354,6 +354,12 @@ Today's goal: [one sentence]
 
 3. **`email-agent-server` binding to `0.0.0.0`** — the launchd startup script used `--host 0.0.0.0`, violating the project rule (Tailscale IP only). After the launchd-triggered restart, the server was exposed on all interfaces. Fixed: script now resolves the Tailscale IP dynamically at startup via `tailscale ip -4`, falling back to `127.0.0.1`. Server restarted and confirmed binding to `100.100.150.128:8000`.
 
+4. **`learner.py` hardcoded author name** — `SYNTHESIS_PROMPT` in `agent/learner.py` still had "Anthony Wolfenden" hardcoded after commit `f4b9311` updated `drafter.py`. Fixed by adding `load_dotenv` and `_AUTHOR_NAME = os.getenv("AUTHOR_NAME", "the adviser")` to `learner.py`, and passing `author_name=_AUTHOR_NAME` to `.format()`.
+
+5. **Silent deletion failure** — `doDelete()` in the dashboard fired-and-forgot the delete request with no response check. The server already returned a `warning` field on mailbox failure but the UI never read it, always showing "🗑 Deleted". Fixed: `doDelete()` now awaits and reads the response, surfacing `data.warning` as a toast if present.
+
+6. **Follow-up emails missing filing CC** — `api_send_followup` in `main.py` did not CC `FILING_EMAIL_FINANCIAL` for the financial account, unlike `api_send` (replies). Fixed by adding the same CC logic. `graph_send_email` in `connectors/graph.py` also gained an optional `cc: list[str]` parameter to support this.
+
 ### What changed in session 5
 
 1. **Financial inbox showing 0 emails (silent TypeError)** — `get_valid_token()` compared `datetime.utcnow()` (naive, no tz) against an ISO string like `"2026-05-09T12:00:00+00:00"` (aware). Python raises `TypeError` which was silently caught by the outer `except Exception` in the poller, logging an auth error but no poll ever succeeding. Fixed by `_parse_expires_at()` helper and `datetime.now(timezone.utc)` throughout `graph.py` and `gmail.py`. Auth error keywords now include `"offset-naive"` and `"offset-aware"` to catch future recurrence.
@@ -449,10 +455,9 @@ Today's goal: [one sentence]
 
 **Known issues / gaps:**
 - `GEMINI_API_KEY` not yet set (deferred — Claude + OpenAI fallback covers all draft needs)
-- **Silent deletion failure** — `api_delete` catches all exceptions and returns `{"ok": True}` even if the Graph/Gmail delete call failed. DB status is still updated to 'deleted'. Low frequency but misleading.
 - **Hardcoded folder names** — "Junk Email", "Newsletters", "Notifications" in `actions.py`. If a mailbox uses different names, autonomous moves silently fail (email stays pending). Not a current problem.
-- **Send flow (Gmail) — resolved** — root cause was Python 3.14.4 being removed by Homebrew while the server was still running on it. `email.generator` is lazy-imported on the first `MIMEText.as_bytes()` call; that import failed after the old Python was deleted. Fixed by restarting the server on 3.14.5 (session 6).
 - **`stub` column** — exists in schema and filters queries (`WHERE stub = 0`) but is never set to 1. Dead column, harmless.
+- **Credential rotation overdue** — `AZURE_CLIENT_SECRET_FINANCIAL` and `GOOGLE_CLIENT_SECRET` were visible in an earlier chat session and flagged for rotation after the personal account was resolved (resolved 2026-05-08). Rotate via Azure portal and Google Cloud Console; update `config/.env` and restart server.
 
 **All files:**
 - `~/email-agent/email-agent` (also `/opt/homebrew/bin/email-agent`)
