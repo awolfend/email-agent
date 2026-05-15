@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 from email.utils import parsedate_to_datetime, parseaddr
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -30,6 +31,7 @@ def _normalize_graph_email(email: dict) -> dict:
     stable_id = email.get("internetMessageId") or graph_id
     sender = email.get("from", {}).get("emailAddress", {}).get("address", "unknown")
     body = email.get("fullBody") or email.get("bodyPreview", "")
+    ical_event = email.get("ical_event")
     return {
         "stable_id": stable_id,
         "op_id": graph_id,
@@ -40,6 +42,7 @@ def _normalize_graph_email(email: dict) -> dict:
         "received_at": email.get("receivedDateTime"),
         "thread_id": None,
         "orig_message_id": None,
+        "ical_event": ical_event,
     }
 
 
@@ -49,6 +52,7 @@ def _normalize_gmail_email(email: dict) -> dict:
     _, addr = parseaddr(raw_from)
     sender = addr.lower() if addr else raw_from
     body = email.get("fullBody") or email.get("snippet", "")
+    ical_event = email.get("ical_event")
     return {
         "stable_id": email_id,
         "op_id": email_id,
@@ -59,6 +63,7 @@ def _normalize_gmail_email(email: dict) -> dict:
         "received_at": _parse_gmail_date(email.get("date", "")),
         "thread_id": email.get("threadId"),
         "orig_message_id": email.get("messageId"),
+        "ical_event": ical_event,
     }
 
 
@@ -108,6 +113,7 @@ async def _process_emails(account: str, emails: list, normalize_fn) -> set:
             confidence=confidence,
         )
 
+        ical_json = json.dumps(n["ical_event"]) if n.get("ical_event") else None
         await log_action(
             account=account,
             email_id=n["stable_id"],
@@ -122,6 +128,7 @@ async def _process_emails(account: str, emails: list, normalize_fn) -> set:
             graph_id=n["graph_id"],
             thread_id=n["thread_id"],
             orig_message_id=n["orig_message_id"],
+            ical_data=ical_json,
         )
 
         if status != "pending":

@@ -152,6 +152,7 @@ async def init_db():
             "ALTER TABLE meeting_proposals ADD COLUMN direction TEXT DEFAULT 'outbound'",
             "ALTER TABLE meeting_proposals ADD COLUMN triggering_email_id TEXT",
             "ALTER TABLE meeting_slots ADD COLUMN proposed_by TEXT DEFAULT 'us'",
+            "ALTER TABLE action_log ADD COLUMN ical_data TEXT",
         ]:
             try:
                 await db.execute(stmt)
@@ -178,7 +179,7 @@ async def log_action(account: str, email_id: str, subject: str, sender: str,
                      confidence: float = None, notes: str = None,
                      body: str = None, received_at: str = None,
                      graph_id: str = None, thread_id: str = None,
-                     orig_message_id: str = None):
+                     orig_message_id: str = None, ical_data: str = None):
     timestamp = datetime.now(timezone.utc).isoformat()
     async with aiosqlite.connect(DB_PATH) as db:
         existing = await db.execute(
@@ -193,20 +194,21 @@ async def log_action(account: str, email_id: str, subject: str, sender: str,
                     received_at = COALESCE(received_at, ?),
                     graph_id = COALESCE(?, graph_id),
                     thread_id = COALESCE(?, thread_id),
-                    orig_message_id = COALESCE(?, orig_message_id)
+                    orig_message_id = COALESCE(?, orig_message_id),
+                    ical_data = COALESCE(?, ical_data)
                 WHERE email_id = ?
             """, (timestamp, classification, confidence, notes, action, body,
-                  received_at, graph_id, thread_id, orig_message_id, email_id))
+                  received_at, graph_id, thread_id, orig_message_id, ical_data, email_id))
         else:
             await db.execute("""
                 INSERT OR IGNORE INTO action_log
                     (timestamp, received_at, account, email_id, subject, sender, action,
                      classification, confidence, notes, status, flagged, body, stub,
-                     graph_id, thread_id, orig_message_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?, 0, ?, ?, ?)
+                     graph_id, thread_id, orig_message_id, ical_data)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?, 0, ?, ?, ?, ?)
             """, (timestamp, received_at, account, email_id, subject, sender, action,
                   classification, confidence, notes, body,
-                  graph_id, thread_id, orig_message_id))
+                  graph_id, thread_id, orig_message_id, ical_data))
         await db.commit()
 
 

@@ -188,6 +188,7 @@ async def get_emails() -> list:
                 break
 
         # Step 2: fetch full details for each message
+        from connectors.ical import parse_ical_string
         emails = []
         for msg in all_message_ids:
             detail = await client.get(
@@ -198,8 +199,11 @@ async def get_emails() -> list:
             detail.raise_for_status()
             data = detail.json()
             headers = {h["name"]: h["value"] for h in data.get("payload", {}).get("headers", [])}
-            full_body = extract_body_from_payload(data.get("payload", {}))
-            emails.append({
+            payload   = data.get("payload", {})
+            full_body = extract_body_from_payload(payload)
+            ics_text  = _extract_ics_from_payload(payload)
+            ical_event = parse_ical_string(ics_text) if ics_text else None
+            entry = {
                 "id": msg["id"],
                 "threadId": data.get("threadId"),
                 "messageId": headers.get("Message-ID", ""),
@@ -208,7 +212,10 @@ async def get_emails() -> list:
                 "date": headers.get("Date", ""),
                 "snippet": data.get("snippet", ""),
                 "fullBody": full_body,
-            })
+            }
+            if ical_event:
+                entry["ical_event"] = {**ical_event, "source": "gmail"}
+            emails.append(entry)
 
         return emails
 

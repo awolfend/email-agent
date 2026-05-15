@@ -169,6 +169,7 @@ async def get_valid_token(account: str) -> str:
 
 
 async def get_emails(account: str) -> list:
+    from connectors.ical import parse_ical_string
     token = await get_valid_token(account)
     base = _mailbox_base(account)
     all_emails = []
@@ -177,8 +178,8 @@ async def get_emails(account: str) -> list:
         url = f"{base}/mailFolders/inbox/messages"
         params = {
             "$top": 100,
-            "$select": "id,internetMessageId,subject,from,receivedDateTime,bodyPreview,isRead,body",
-            "$orderby": "receivedDateTime desc",
+            "$select": "id,internetMessageId,subject,from,receivedDateTime,bodyPreview,isRead,body,meetingMessageType",
+            "$expand": "event($select=start,end,location,organizer)",
         }
 
         while url:
@@ -194,6 +195,26 @@ async def get_emails(account: str) -> list:
                 content = raw_body.get("content", "")
                 content_type = raw_body.get("contentType", "text")
                 email["fullBody"] = strip_html(content) if content_type == "html" else content.strip()
+
+                # Extract structured event data for meeting requests
+                meeting_type = email.get("meetingMessageType", "")
+                event_obj    = email.get("event")
+                if meeting_type and event_obj:
+                    s   = event_obj.get("start", {})
+                    e   = event_obj.get("end",   {})
+                    org = (event_obj.get("organizer") or {}).get("emailAddress", {})
+                    email["ical_event"] = {
+                        "summary":   email.get("subject", ""),
+                        "start":     s.get("dateTime"),
+                        "start_tz":  s.get("timeZone", "UTC"),
+                        "end":       e.get("dateTime"),
+                        "end_tz":    e.get("timeZone", "UTC"),
+                        "organizer": org.get("address", ""),
+                        "location":  (event_obj.get("location") or {}).get("displayName", ""),
+                        "meeting_type": meeting_type,
+                        "source": "graph",
+                    }
+
                 all_emails.append(email)
             url = data.get("@odata.nextLink")
 

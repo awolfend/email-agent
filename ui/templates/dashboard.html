@@ -917,6 +917,34 @@
         }
         .compose-cancel-btn:hover { color: var(--text); border-color: var(--text-dim); }
 
+        /* ---- Calendar invite panel ---- */
+        #calendar-invite-panel {
+            display: none;
+            flex-direction: column;
+            gap: 8px;
+            padding: 12px 20px;
+            border-bottom: 1px solid var(--border);
+            background: rgba(168,85,247,0.05);
+            flex-shrink: 0;
+        }
+        #calendar-invite-panel.show { display: flex; }
+        .ci-panel-title {
+            font-size: 11px;
+            font-weight: 700;
+            color: var(--purple);
+            text-transform: uppercase;
+            letter-spacing: 0.07em;
+        }
+        .ci-summary { font-size: 14px; font-weight: 600; color: var(--text); }
+        .ci-meta-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px 18px;
+            font-size: 12px;
+            color: var(--text-dim);
+        }
+        .ci-meta-label { color: var(--text-dimmer); font-weight: 500; }
+
         /* ---- Meeting response panel ---- */
         .tag-meeting_response { background: rgba(20,184,166,0.15); color: var(--teal); }
         .dot-meeting_response { background: var(--teal); }
@@ -1478,6 +1506,12 @@
         </div>
 
         <div id="action-bar"></div>
+
+        <div id="calendar-invite-panel">
+            <div class="ci-panel-title">📅 Calendar Invite</div>
+            <div class="ci-summary" id="ci-summary"></div>
+            <div class="ci-meta-row" id="ci-meta"></div>
+        </div>
 
         <div id="meeting-response-panel">
             <div class="mr-panel-title">📅 Meeting Response</div>
@@ -2206,6 +2240,13 @@
             draftVisible = false;
         }
 
+        // Calendar invite panel
+        if (email.classification === 'calendar' && email.ical_data && currentMode === 'inbox') {
+            renderCalendarInvitePanel(email.ical_data);
+        } else {
+            document.getElementById('calendar-invite-panel').classList.remove('show');
+        }
+
         // Meeting response panel
         if (email.classification === 'meeting_response' && currentMode === 'inbox') {
             loadMeetingResponsePanel(email.sender || '');
@@ -2283,6 +2324,7 @@
             actions = `
                 <button class="action-btn send" onclick="doCalendarAccept()">✓ Accept</button>
                 <button class="action-btn delete" onclick="doCalendarDecline()">✕ Decline</button>
+                <button class="action-btn reply" onclick="proposeAlternative()">↩ Propose Alternative</button>
                 <button class="action-btn archive" onclick="doArchive()">⬇ Archive</button>
                 ${fileBtn}`;
         } else if (c === 'notification' || c === 'newsletter') {
@@ -2861,6 +2903,45 @@
     // ---- Meeting response panel ----
 
     let currentMeetingProposalId = null;
+
+    // ---- Calendar invite panel ----
+
+    function renderCalendarInvitePanel(icalDataRaw) {
+        let ev;
+        try { ev = typeof icalDataRaw === 'string' ? JSON.parse(icalDataRaw) : icalDataRaw; }
+        catch(e) { return; }
+        if (!ev) return;
+
+        document.getElementById('ci-summary').textContent = ev.summary || '(no title)';
+
+        const fmtDt = iso => {
+            if (!iso) return '—';
+            try { return new Date(iso).toLocaleString('en-AU', { weekday:'short', day:'numeric', month:'short', year:'numeric', hour:'numeric', minute:'2-digit', hour12:true }); }
+            catch(e) { return iso; }
+        };
+
+        const rows = [];
+        if (ev.start) rows.push(`<span><span class="ci-meta-label">When</span> ${escHtml(fmtDt(ev.start))}${ev.end ? ' – ' + escHtml(fmtDt(ev.end)) : ''}</span>`);
+        if (ev.organizer) rows.push(`<span><span class="ci-meta-label">From</span> ${escHtml(ev.organizer)}</span>`);
+        if (ev.location) rows.push(`<span><span class="ci-meta-label">Where</span> ${escHtml(ev.location)}</span>`);
+        document.getElementById('ci-meta').innerHTML = rows.join('');
+        document.getElementById('calendar-invite-panel').classList.add('show');
+    }
+
+    function proposeAlternative() {
+        if (!currentEmail) return;
+        const subject = currentEmail.subject || '';
+        const sender  = currentEmail.sender  || '';
+        openCompose(currentEmail.account || 'financial');
+        // Pre-fill recipient and subject after compose opens
+        setTimeout(() => {
+            document.getElementById('compose-to').value = sender;
+            document.getElementById('compose-subject').value = `Re: ${subject}`;
+            document.getElementById('compose-prompt').value = 'Propose alternative meeting times';
+            detectMeetingIntent();
+            composeDraftAutoSave();
+        }, 50);
+    }
 
     async function loadMeetingResponsePanel(sender) {
         const panel    = document.getElementById('meeting-response-panel');
