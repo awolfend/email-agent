@@ -1165,4 +1165,17 @@ async def test_account(account: str):
     )
 
 if __name__ == "__main__":
-    uvicorn.run("main:app", host=os.getenv("TAILSCALE_IP", "127.0.0.1"), port=8000, reload=True)
+    import socket
+
+    tailscale_ip = os.getenv("TAILSCALE_IP", "")
+
+    socks = []
+    for bind_host in filter(None, ["127.0.0.1", tailscale_ip or None]):
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        s.bind((bind_host, 8000))
+        socks.append(s)
+
+    config = uvicorn.Config("main:app", log_level="info")
+    server = uvicorn.Server(config)
+    asyncio.run(server.serve(sockets=socks))

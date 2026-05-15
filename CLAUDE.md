@@ -11,19 +11,19 @@ The server is managed by launchd (`~/Library/LaunchAgents/com.awolfend.email-age
 launchctl unload ~/Library/LaunchAgents/com.awolfend.email-agent.plist
 launchctl load ~/Library/LaunchAgents/com.awolfend.email-agent.plist
 
-# Run manually for debug output (binds to 127.0.0.1 fallback if Tailscale is down)
+# Run manually for debug output
 cd ~/email-agent && source venv/bin/activate
-uvicorn main:app --host 127.0.0.1 --port 8000 --reload
+python main.py  # binds 127.0.0.1 + Tailscale IP (via $TAILSCALE_IP env var)
 
 # Verify running
-ps aux | grep uvicorn | grep email-agent
+ps aux | grep "python main.py"
 curl -s http://100.100.150.128:8000/api/stats
 
 # Trigger a manual poll
 curl -s -X POST http://100.100.150.128:8000/api/poll
 ```
 
-The startup script (`email-agent-server`) resolves the Tailscale IP dynamically via `tailscale ip -4`. The server must **never** bind to `0.0.0.0`.
+The startup script (`email-agent-server`) resolves the Tailscale IP via `tailscale ip -4`, exports it as `$TAILSCALE_IP`, then runs `python main.py`. The `__main__` block in `main.py` binds to both `127.0.0.1` (for OAuth callbacks, which must use `localhost`) and the Tailscale IP. The server must **never** bind to `0.0.0.0`.
 
 There is no test suite. Validation is done by running the server and exercising endpoints directly.
 

@@ -1,3 +1,4 @@
 #!/bin/bash
-TAILSCALE_IP=$(tailscale ip -4 2>/dev/null || echo "127.0.0.1")
-exec /Users/awolfend/email-agent/venv/bin/uvicorn main:app --host "${TAILSCALE_IP}" --port 8000
+TAILSCALE_IP=$(tailscale ip -4 2>/dev/null || echo "")
+export TAILSCALE_IP
+exec /Users/awolfend/email-agent/venv/bin/python main.py
