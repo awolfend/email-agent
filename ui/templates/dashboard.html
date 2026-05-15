@@ -1113,6 +1113,18 @@
             line-height: 1.6;
         }
         .settings-textarea:focus { outline: none; border-color: var(--accent); }
+        .settings-input-sm {
+            height: 36px;
+            padding: 6px 10px;
+            font-size: 13px;
+            resize: none;
+        }
+        .settings-meeting-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+            margin-top: 14px;
+        }
 
         /* ---- Mobile-only elements (hidden on desktop) ---- */
         #hamburger { display: none; }
@@ -1624,6 +1636,47 @@
             </div>
             <div style="margin-top:12px;">
                 <button class="settings-build-btn" onclick="saveAccountSettings('gmail')">💾 Save Tax Settings</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="settings-section">
+        <div class="settings-section-title">Meeting Proposals</div>
+        <div class="settings-card">
+            <div class="settings-card-header">
+                <div>
+                    <div class="settings-card-title">Scheduling Defaults</div>
+                    <div class="settings-card-desc" style="margin-top:6px;">Controls slot generation, calendar buffers, and auto-release timing.</div>
+                </div>
+            </div>
+            <div class="settings-meeting-grid">
+                <div class="settings-field">
+                    <div class="settings-label">Default duration (min)</div>
+                    <input type="number" id="meeting-default-duration" class="settings-textarea settings-input-sm" min="15" max="240" step="15" />
+                </div>
+                <div class="settings-field">
+                    <div class="settings-label">Calendar buffer (min)</div>
+                    <input type="number" id="meeting-buffer-minutes" class="settings-textarea settings-input-sm" min="0" max="60" step="5" />
+                </div>
+                <div class="settings-field">
+                    <div class="settings-label">Business hours start</div>
+                    <input type="time" id="meeting-hours-start" class="settings-textarea settings-input-sm" />
+                </div>
+                <div class="settings-field">
+                    <div class="settings-label">Business hours end</div>
+                    <input type="time" id="meeting-hours-end" class="settings-textarea settings-input-sm" />
+                </div>
+                <div class="settings-field">
+                    <div class="settings-label">No-response window (hrs)</div>
+                    <input type="number" id="meeting-no-response-hours" class="settings-textarea settings-input-sm" min="1" max="168" step="1" />
+                </div>
+                <div class="settings-field">
+                    <div class="settings-label">Post-slot buffer (min)</div>
+                    <input type="number" id="meeting-post-slot-buffer" class="settings-textarea settings-input-sm" min="0" max="120" step="5" />
+                </div>
+            </div>
+            <div style="margin-top:14px;">
+                <button class="settings-build-btn" onclick="saveMeetingSettings()">💾 Save Meeting Settings</button>
             </div>
         </div>
     </div>
@@ -2548,8 +2601,37 @@
             document.getElementById('footer-gmail').value = data.footer_gmail || '';
             document.getElementById('prompt-personal').value = data.prompt_personal || '';
             document.getElementById('footer-personal').value = data.footer_personal || '';
+            document.getElementById('meeting-default-duration').value = data.meeting_default_duration || '60';
+            document.getElementById('meeting-hours-start').value = data.meeting_hours_start || '09:00';
+            document.getElementById('meeting-hours-end').value = data.meeting_hours_end || '17:00';
+            document.getElementById('meeting-buffer-minutes').value = data.meeting_buffer_minutes || '15';
+            document.getElementById('meeting-no-response-hours').value = data.meeting_no_response_hours || '36';
+            document.getElementById('meeting-post-slot-buffer').value = data.meeting_post_slot_buffer_minutes || '30';
         } catch (e) {
             showToast('Failed to load settings');
+        }
+    }
+
+    async function saveMeetingSettings() {
+        const fields = [
+            { key: 'meeting_default_duration',        id: 'meeting-default-duration' },
+            { key: 'meeting_hours_start',              id: 'meeting-hours-start' },
+            { key: 'meeting_hours_end',                id: 'meeting-hours-end' },
+            { key: 'meeting_buffer_minutes',           id: 'meeting-buffer-minutes' },
+            { key: 'meeting_no_response_hours',        id: 'meeting-no-response-hours' },
+            { key: 'meeting_post_slot_buffer_minutes', id: 'meeting-post-slot-buffer' },
+        ];
+        try {
+            await Promise.all(fields.map(f =>
+                fetch('/api/settings', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ key: f.key, value: document.getElementById(f.id).value }),
+                })
+            ));
+            showToast('✓ Meeting settings saved');
+        } catch (e) {
+            showToast('Save failed — check server logs');
         }
     }
 

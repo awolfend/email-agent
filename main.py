@@ -1068,13 +1068,21 @@ async def api_get_settings():
         "footer_financial": await _get("footer_financial", ""),
         "footer_gmail": await _get("footer_gmail", ""),
         "footer_personal": await _get("footer_personal", ""),
+        "meeting_default_duration": await _get("meeting_default_duration", "60"),
+        "meeting_hours_start": await _get("meeting_hours_start", "09:00"),
+        "meeting_hours_end": await _get("meeting_hours_end", "17:00"),
+        "meeting_buffer_minutes": await _get("meeting_buffer_minutes", "15"),
+        "meeting_no_response_hours": await _get("meeting_no_response_hours", "36"),
+        "meeting_post_slot_buffer_minutes": await _get("meeting_post_slot_buffer_minutes", "30"),
     })
 
 
 @app.post("/api/settings")
 async def api_save_setting(body: SettingUpdate):
     allowed = {"prompt_financial", "prompt_gmail", "prompt_personal",
-               "footer_financial", "footer_gmail", "footer_personal"}
+               "footer_financial", "footer_gmail", "footer_personal",
+               "meeting_default_duration", "meeting_hours_start", "meeting_hours_end",
+               "meeting_buffer_minutes", "meeting_no_response_hours", "meeting_post_slot_buffer_minutes"}
     if body.key not in allowed:
         return JSONResponse({"ok": False, "error": "Unknown setting key"}, status_code=400)
     await set_setting(body.key, body.value)
