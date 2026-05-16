@@ -290,6 +290,16 @@ async def ensure_inbox_state(email_id: str, graph_id: str):
         await db.commit()
 
 
+async def update_ical_data(email_id: str, ical_json: str):
+    """Write ical_data only when the existing row has NULL — used to backfill on retry polls."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "UPDATE action_log SET ical_data = ? WHERE email_id = ? AND ical_data IS NULL",
+            (ical_json, email_id)
+        )
+        await db.commit()
+
+
 async def update_email_status(email_id: str, status: str, action: str = None):
     async with aiosqlite.connect(DB_PATH) as db:
         if action:

@@ -7,7 +7,7 @@ from connectors.graph import get_emails as graph_get_emails, delete_calendar_eve
 from connectors.gmail import get_emails as gmail_get_emails, delete_calendar_event as gmail_delete_event
 from agent.classifier import classify_email
 from agent.actions import execute_action
-from db.database import log_action, get_email_by_id, update_email_status, ensure_inbox_state, mark_missing_as_archived, set_auth_error, clear_auth_error, prune_old_records, get_sender_rule, get_open_proposals_for_client, get_expired_tentative_slots, update_slot_status, expire_completed_proposals
+from db.database import log_action, get_email_by_id, update_email_status, ensure_inbox_state, update_ical_data, mark_missing_as_archived, set_auth_error, clear_auth_error, prune_old_records, get_sender_rule, get_open_proposals_for_client, get_expired_tentative_slots, update_slot_status, expire_completed_proposals
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -80,6 +80,8 @@ async def _process_emails(account: str, emails: list, normalize_fn) -> set:
             if prev not in (None, "pending"):
                 logger.info(f"[{account}] Back in inbox (was {prev}): {n['subject'][:50]}")
             await ensure_inbox_state(n["stable_id"], n["op_id"])
+            if n.get("ical_event") and not existing.get("ical_data"):
+                await update_ical_data(n["stable_id"], json.dumps(n["ical_event"]))
             continue
 
         # Meeting response detection takes priority over all other classification

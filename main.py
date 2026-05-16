@@ -216,10 +216,13 @@ async def api_generate_draft(email_id: str, body: GenerateDraftRequest = Generat
     if sender:
         # Gather CRM context (financial only) + email history (all accounts) in parallel
         if account == "financial":
-            hs_ctx, email_history = await asyncio.gather(
+            _r = await asyncio.gather(
                 hubspot_context(sender),
                 graph_email_history("financial", sender, limit=8),
+                return_exceptions=True,
             )
+            hs_ctx       = _r[0] if not isinstance(_r[0], Exception) else ""
+            email_history = _r[1] if not isinstance(_r[1], Exception) else []
         elif account == "personal":
             hs_ctx        = ""
             email_history = await graph_email_history("personal", sender, limit=8)
@@ -406,8 +409,10 @@ async def api_calendar_accept(email_id: str):
         return JSONResponse({"ok": False, "error": "Email not found"}, status_code=404)
     try:
         if email["account"] in ("financial", "personal"):
-            graph_id = email.get("graph_id") or email_id
-            await graph_accept_calendar(email["account"], graph_id)
+            live_id = await graph_get_message_id(email["account"], email_id)
+            if not live_id:
+                return JSONResponse({"ok": False, "error": "Message not found in mailbox"}, status_code=404)
+            await graph_accept_calendar(email["account"], live_id)
         elif email["account"] == "gmail":
             await gmail_accept_calendar(email_id)
     except Exception as e:
@@ -423,8 +428,10 @@ async def api_calendar_decline(email_id: str):
         return JSONResponse({"ok": False, "error": "Email not found"}, status_code=404)
     try:
         if email["account"] in ("financial", "personal"):
-            graph_id = email.get("graph_id") or email_id
-            await graph_decline_calendar(email["account"], graph_id)
+            live_id = await graph_get_message_id(email["account"], email_id)
+            if not live_id:
+                return JSONResponse({"ok": False, "error": "Message not found in mailbox"}, status_code=404)
+            await graph_decline_calendar(email["account"], live_id)
         elif email["account"] == "gmail":
             await gmail_decline_calendar(email_id)
     except Exception as e:
@@ -532,10 +539,13 @@ async def api_compose_draft(body: ComposeDraftRequest):
 
     if to_email:
         if account == "financial":
-            hs_ctx, email_history = await asyncio.gather(
+            _r = await asyncio.gather(
                 hubspot_context(to_email),
                 graph_email_history("financial", to_email, limit=6),
+                return_exceptions=True,
             )
+            hs_ctx       = _r[0] if not isinstance(_r[0], Exception) else ""
+            email_history = _r[1] if not isinstance(_r[1], Exception) else []
         elif account == "personal":
             hs_ctx        = ""
             email_history = await graph_email_history("personal", to_email, limit=6)

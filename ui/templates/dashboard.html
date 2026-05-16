@@ -3114,9 +3114,6 @@
 
     // ---- Calendar mode ----
 
-    let allProposals = [];
-    let selectedProposalId = null;
-
     let allInvites      = [];
     let selectedInviteId = null;
 
@@ -3245,52 +3242,6 @@
             detectMeetingIntent();
             composeDraftAutoSave();
         }, 50);
-    }
-
-    async function calConfirmSlot(proposalId, slotId) {
-        const res  = await fetch(`/api/meeting/${proposalId}/confirm/${slotId}`, { method: 'POST' });
-        const data = await res.json();
-        if (data.ok) {
-            showToast('✓ Slot confirmed — calendar invite sent');
-            selectedProposalId = null;
-            await loadCalendarMode();
-            // Open compose overlay with pre-filled confirmation draft
-            if (data.draft_body) {
-                openCompose(data.account || 'financial');
-                setTimeout(() => {
-                    document.getElementById('compose-to').value      = data.draft_to || '';
-                    document.getElementById('compose-subject').value = data.draft_subject || '';
-                    const draftEl = document.getElementById('compose-draft');
-                    draftEl.value = data.draft_body;
-                    draftEl.style.display = '';
-                    document.getElementById('compose-draft-label').style.display = '';
-                }, 50);
-            }
-        } else {
-            showToast(`Confirm failed: ${data.error || 'unknown'}`);
-        }
-    }
-
-    async function calDeclineSlot(proposalId, slotId) {
-        const res  = await fetch(`/api/meeting/${proposalId}/decline-slot/${slotId}`, { method: 'POST' });
-        const data = await res.json();
-        if (data.ok) {
-            showToast('Slot removed');
-            await loadCalendarMode();
-        } else {
-            showToast(`Decline failed: ${data.error || 'unknown'}`);
-        }
-    }
-
-    async function calDeclineAll(proposalId) {
-        const res  = await fetch(`/api/meeting/${proposalId}/decline`, { method: 'POST' });
-        const data = await res.json();
-        if (data.ok) {
-            showToast('All slots declined');
-            await loadCalendarMode();
-        } else {
-            showToast(`Decline failed: ${data.error || 'unknown'}`);
-        }
     }
 
     // ---- Meeting response panel ----
