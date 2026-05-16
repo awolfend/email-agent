@@ -2172,7 +2172,16 @@
     }
 
     function updateAccountCounts() {
-        if (currentMode === 'calendar') return; // loadCalendarMode sets these
+        if (currentMode === 'calendar') {
+            const acct = { financial: 0, gmail: 0, personal: 0 };
+            allInvites.forEach(inv => { if (acct[inv.account] !== undefined) acct[inv.account]++; });
+            document.getElementById('pstat-pending').textContent  = allInvites.length;
+            document.getElementById('stat-acct-all').textContent  = allInvites.length;
+            document.getElementById('stat-financial').textContent = acct.financial;
+            document.getElementById('stat-gmail').textContent     = acct.gmail;
+            document.getElementById('stat-personal').textContent  = acct.personal;
+            return;
+        }
         let base = allEmails;
         if (currentMode === 'inbox') {
             base = base.filter(e => e.status === 'pending');
@@ -3190,7 +3199,7 @@
             <div style="display:flex;gap:8px;flex-wrap:wrap;">
                 <button class="mr-confirm-btn" onclick="calAcceptInvite('${emailIdAttr}','${invite.account}')">✓ Accept</button>
                 <button class="mr-decline-slot-btn" style="padding:6px 14px;" onclick="calDeclineInvite('${emailIdAttr}','${invite.account}')">✕ Decline</button>
-                <button class="mr-decline-slot-btn" style="padding:6px 14px;" onclick="calProposeAlternative('${emailIdAttr}','${invite.account}',${JSON.stringify(ev.organizer||'').replace(/"/g,'&quot;')},${JSON.stringify(invite.subject||'').replace(/"/g,'&quot;')})">↩ Propose Alternative</button>
+                <button class="mr-decline-slot-btn" style="padding:6px 14px;" onclick="calProposeAlternative('${emailIdAttr}','${invite.account}','${escAttr(ev.organizer||'')}','${escAttr(invite.subject||'')}')">↩ Propose Alternative</button>
             </div>
         </div>`;
     }
@@ -3248,12 +3257,14 @@
             // Open compose overlay with pre-filled confirmation draft
             if (data.draft_body) {
                 openCompose(data.account || 'financial');
-                document.getElementById('compose-to').value      = data.draft_to || '';
-                document.getElementById('compose-subject').value = data.draft_subject || '';
-                const draftEl = document.getElementById('compose-draft');
-                draftEl.value = data.draft_body;
-                draftEl.style.display = '';
-                document.getElementById('compose-draft-label').style.display = '';
+                setTimeout(() => {
+                    document.getElementById('compose-to').value      = data.draft_to || '';
+                    document.getElementById('compose-subject').value = data.draft_subject || '';
+                    const draftEl = document.getElementById('compose-draft');
+                    draftEl.value = data.draft_body;
+                    draftEl.style.display = '';
+                    document.getElementById('compose-draft-label').style.display = '';
+                }, 50);
             }
         } else {
             showToast(`Confirm failed: ${data.error || 'unknown'}`);

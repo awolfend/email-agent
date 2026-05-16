@@ -282,24 +282,56 @@ async def api_send(email_id: str, body: SendRequest):
             return JSONResponse({"ok": False, "error": f"Unknown account: {email['account']}"}, status_code=400)
         await update_email_status(email_id, "sent", "replied")
 
-        # If the user confirmed a meeting slot, create a calendar event with the client as attendee
+        # If the user confirmed a meeting slot, create confirmed event + mirror holds on all calendars
         join_url = None
         if body.meeting_start and body.meeting_end:
             client_emails = extract_email_addresses(body.to)
             client_email  = client_emails[0] if client_emails else ""
             if client_email:
                 meet_subject = re.sub(r'^Re:\s*', '', body.subject, flags=re.IGNORECASE).strip() or body.subject
+                s_iso = body.meeting_start
+                e_iso = body.meeting_end
+                acct  = email["account"]
                 try:
-                    if email["account"] == "gmail":
-                        _, join_url = await gmail_create_confirmed(
-                            body.meeting_start, body.meeting_end,
-                            meet_subject, client_email, body.client_name,
+                    if acct == "gmail":
+                        r = await asyncio.gather(
+                            gmail_create_confirmed(s_iso, e_iso, meet_subject, client_email, body.client_name),
+                            graph_create_hold("financial", s_iso, e_iso),
+                            return_exceptions=True,
                         )
-                    else:
-                        _, join_url = await graph_create_confirmed(
-                            email["account"], body.meeting_start, body.meeting_end,
-                            meet_subject, client_email, body.client_name,
+                        if not isinstance(r[0], Exception):
+                            _, join_url = r[0]
+                        else:
+                            logger.warning(f"Gmail confirmed event failed after send: {r[0]}")
+                        if isinstance(r[1], Exception):
+                            logger.warning(f"Financial mirror hold failed after send: {r[1]}")
+                    elif acct == "personal":
+                        r = await asyncio.gather(
+                            graph_create_confirmed("personal", s_iso, e_iso, meet_subject, client_email, body.client_name),
+                            graph_create_hold("financial", s_iso, e_iso),
+                            gmail_create_hold(s_iso, e_iso),
+                            return_exceptions=True,
                         )
+                        if not isinstance(r[0], Exception):
+                            _, join_url = r[0]
+                        else:
+                            logger.warning(f"Personal confirmed event failed after send: {r[0]}")
+                        if isinstance(r[1], Exception):
+                            logger.warning(f"Financial mirror hold failed after send: {r[1]}")
+                        if isinstance(r[2], Exception):
+                            logger.warning(f"Gmail mirror hold failed after send: {r[2]}")
+                    else:  # financial
+                        r = await asyncio.gather(
+                            graph_create_confirmed("financial", s_iso, e_iso, meet_subject, client_email, body.client_name),
+                            gmail_create_hold(s_iso, e_iso),
+                            return_exceptions=True,
+                        )
+                        if not isinstance(r[0], Exception):
+                            _, join_url = r[0]
+                        else:
+                            logger.warning(f"Financial confirmed event failed after send: {r[0]}")
+                        if isinstance(r[1], Exception):
+                            logger.warning(f"Gmail mirror hold failed after send: {r[1]}")
                 except Exception as e:
                     logger.warning(f"Calendar event creation failed after send: {e}")
 

@@ -731,7 +731,7 @@ async def get_pending_calendar_invites() -> list[dict]:
     return result
 
 
-_VALID_PROPOSAL_STATUSES = {'pending', 'negotiating', 'confirmed', 'cancelled', 'expired'}
+_VALID_PROPOSAL_STATUSES = {'pending', 'negotiating', 'confirmed', 'cancelled', 'expired', 'declined'}
 _VALID_SLOT_STATUSES = {'tentative', 'confirmed', 'declined', 'released'}
 
 async def update_proposal_status(proposal_id: int, status: str):

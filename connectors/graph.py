@@ -1,3 +1,4 @@
+import asyncio
 import os
 import logging
 import httpx
@@ -169,7 +170,6 @@ async def get_valid_token(account: str) -> str:
 
 
 async def get_emails(account: str) -> list:
-    from connectors.ical import parse_ical_string
     token = await get_valid_token(account)
     base = _mailbox_base(account)
     all_emails = []
@@ -178,7 +178,7 @@ async def get_emails(account: str) -> list:
         url = f"{base}/mailFolders/inbox/messages"
         params = {
             "$top": 100,
-            "$select": "id,internetMessageId,subject,from,receivedDateTime,bodyPreview,isRead,body",
+            "$select": "id,internetMessageId,subject,from,receivedDateTime,bodyPreview,isRead,body,meetingMessageType",
         }
 
         while url:
@@ -194,9 +194,19 @@ async def get_emails(account: str) -> list:
                 content = raw_body.get("content", "")
                 content_type = raw_body.get("contentType", "text")
                 email["fullBody"] = strip_html(content) if content_type == "html" else content.strip()
-
                 all_emails.append(email)
             url = data.get("@odata.nextLink")
+
+    # Populate ical_event for meeting invite messages via per-message $expand=event
+    meeting_emails = [e for e in all_emails if e.get("meetingMessageType") not in (None, "none", "")]
+    if meeting_emails:
+        events = await asyncio.gather(
+            *[get_message_event(account, e["id"]) for e in meeting_emails],
+            return_exceptions=True,
+        )
+        for email, ev in zip(meeting_emails, events):
+            if ev and not isinstance(ev, Exception):
+                email["ical_event"] = ev
 
     return all_emails
 
