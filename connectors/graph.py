@@ -170,6 +170,8 @@ async def get_valid_token(account: str) -> str:
 
 
 async def get_emails(account: str) -> list:
+    from connectors.ical import parse_ical_string
+    import base64 as _base64
     token = await get_valid_token(account)
     base = _mailbox_base(account)
     all_emails = []
@@ -178,7 +180,7 @@ async def get_emails(account: str) -> list:
         url = f"{base}/mailFolders/inbox/messages"
         params = {
             "$top": 100,
-            "$select": "id,internetMessageId,subject,from,receivedDateTime,bodyPreview,isRead,body",
+            "$select": "id,internetMessageId,subject,from,receivedDateTime,bodyPreview,isRead,body,hasAttachments",
         }
 
         while url:
@@ -197,34 +199,31 @@ async def get_emails(account: str) -> list:
                 all_emails.append(email)
             url = data.get("@odata.nextLink")
 
-    # Identify meeting messages via a separate filtered request (meetingMessageType is on the
-    # derived eventMessage type and cannot be $selected on the base messages endpoint)
-    if all_emails:
-        email_index = {e["id"]: e for e in all_emails}
-        try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                resp = await client.get(
-                    f"{base}/mailFolders/inbox/messages",
-                    headers={"Authorization": f"Bearer {token}"},
-                    params={
-                        "$filter": "isof('microsoft.graph.eventMessage')",
-                        "$select": "id",
-                        "$top": 100,
-                    },
-                )
-                if resp.status_code == 200:
-                    meeting_ids = [m["id"] for m in resp.json().get("value", [])]
-                    meeting_emails = [email_index[mid] for mid in meeting_ids if mid in email_index]
-                    if meeting_emails:
-                        events = await asyncio.gather(
-                            *[get_message_event(account, e["id"]) for e in meeting_emails],
-                            return_exceptions=True,
-                        )
-                        for email, ev in zip(meeting_emails, events):
-                            if ev and not isinstance(ev, Exception):
-                                email["ical_event"] = ev
-        except Exception as e:
-            logger.debug(f"get_emails: meeting message detection skipped ({account}): {e}")
+    # For emails with attachments, fetch attachment list and parse any text/calendar part
+    emails_with_attachments = [e for e in all_emails if e.get("hasAttachments")]
+    if emails_with_attachments:
+        async def _fetch_ical(email: dict) -> None:
+            try:
+                async with httpx.AsyncClient(timeout=15.0) as client:
+                    resp = await client.get(
+                        f"{base}/messages/{email['id']}/attachments",
+                        headers={"Authorization": f"Bearer {token}"},
+                        params={"$select": "contentType,contentBytes,name"},
+                    )
+                    if resp.status_code != 200:
+                        return
+                    for att in resp.json().get("value", []):
+                        ct = att.get("contentType", "")
+                        if ct.startswith("text/calendar") or ct.startswith("application/ics"):
+                            raw = _base64.b64decode(att.get("contentBytes", ""))
+                            parsed = parse_ical_string(raw.decode("utf-8", errors="replace"))
+                            if parsed:
+                                email["ical_event"] = parsed
+                            return
+            except Exception as e:
+                logger.debug(f"get_emails: attachment fetch failed for {email.get('id')}: {e}")
+
+        await asyncio.gather(*[_fetch_ical(e) for e in emails_with_attachments], return_exceptions=True)
 
     return all_emails
 
