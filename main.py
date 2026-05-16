@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import os
 import re
 import socket
@@ -90,6 +91,8 @@ from agent.learner import build_voice_profiles
 from connectors.hubspot import get_contact_context as hubspot_context, search_contacts as hubspot_search_contacts
 
 load_dotenv("config/.env")
+
+logger = logging.getLogger(__name__)
 
 
 def extract_email_addresses(raw: str) -> list[str]:
@@ -636,14 +639,23 @@ async def api_compose_send(body: ComposeSendRequest):
         meet_subject = body.subject
         own_id = fin_mirror = tax_mirror = ""
 
+        def _unpack_confirmed(result, label):
+            nonlocal hold_failed
+            if isinstance(result, Exception):
+                logger.warning(f"{label} confirmed event failed: {result}"); hold_failed = True
+                return "", ""
+            eid, url = result
+            if not eid:
+                logger.warning(f"{label} confirmed event returned empty id"); hold_failed = True
+            return eid, url
+
         if account == "financial":
             r = await asyncio.gather(
                 graph_create_confirmed("financial", s_iso, e_iso, meet_subject, to_email, client_display_name),
                 gmail_create_hold(s_iso, e_iso),
                 return_exceptions=True,
             )
-            if not isinstance(r[0], Exception): own_id, join_url = r[0]
-            else: logger.warning(f"Financial confirmed event failed: {r[0]}"); hold_failed = True
+            own_id, join_url = _unpack_confirmed(r[0], "Financial")
             if not isinstance(r[1], Exception): tax_mirror = r[1]
             else: logger.warning(f"Gmail mirror hold failed: {r[1]}"); hold_failed = True
 
@@ -653,8 +665,7 @@ async def api_compose_send(body: ComposeSendRequest):
                 graph_create_hold("financial", s_iso, e_iso),
                 return_exceptions=True,
             )
-            if not isinstance(r[0], Exception): own_id, join_url = r[0]
-            else: logger.warning(f"Gmail confirmed event failed: {r[0]}"); hold_failed = True
+            own_id, join_url = _unpack_confirmed(r[0], "Gmail")
             if not isinstance(r[1], Exception): fin_mirror = r[1]
             else: logger.warning(f"Financial mirror hold failed: {r[1]}"); hold_failed = True
 
@@ -665,8 +676,7 @@ async def api_compose_send(body: ComposeSendRequest):
                 gmail_create_hold(s_iso, e_iso),
                 return_exceptions=True,
             )
-            if not isinstance(r[0], Exception): own_id, join_url = r[0]
-            else: logger.warning(f"Personal confirmed event failed: {r[0]}"); hold_failed = True
+            own_id, join_url = _unpack_confirmed(r[0], "Personal")
             if not isinstance(r[1], Exception): fin_mirror = r[1]
             else: logger.warning(f"Financial mirror hold failed: {r[1]}"); hold_failed = True
             if not isinstance(r[2], Exception): tax_mirror = r[2]
