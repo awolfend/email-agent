@@ -77,7 +77,7 @@ from db.database import (
     log_action,
     save_meeting_proposal, save_meeting_slot,
     get_meeting_proposal, get_slots_for_proposal,
-    get_open_proposals_for_client,
+    get_open_proposals_for_client, get_all_proposals,
     update_slot_status, update_proposal_status,
 )
 from agent.poller import start_scheduler, poll_all
@@ -337,7 +337,6 @@ async def api_calendar_accept(email_id: str):
     email = await get_email_by_id(email_id)
     if not email:
         return JSONResponse({"ok": False, "error": "Email not found"}, status_code=404)
-    warning = None
     try:
         if email["account"] in ("financial", "personal"):
             graph_id = email.get("graph_id") or email_id
@@ -345,9 +344,9 @@ async def api_calendar_accept(email_id: str):
         elif email["account"] == "gmail":
             await gmail_accept_calendar(email_id)
     except Exception as e:
-        warning = str(e)
+        return JSONResponse({"ok": False, "error": str(e)})
     await update_email_status(email_id, "approved", "calendar_accepted")
-    return {"ok": True, **({"warning": warning} if warning else {})}
+    return JSONResponse({"ok": True})
 
 
 @app.post("/api/email/{email_id}/calendar/decline")
@@ -355,7 +354,6 @@ async def api_calendar_decline(email_id: str):
     email = await get_email_by_id(email_id)
     if not email:
         return JSONResponse({"ok": False, "error": "Email not found"}, status_code=404)
-    warning = None
     try:
         if email["account"] in ("financial", "personal"):
             graph_id = email.get("graph_id") or email_id
@@ -363,9 +361,9 @@ async def api_calendar_decline(email_id: str):
         elif email["account"] == "gmail":
             await gmail_decline_calendar(email_id)
     except Exception as e:
-        warning = str(e)
+        return JSONResponse({"ok": False, "error": str(e)})
     await update_email_status(email_id, "rejected", "calendar_declined")
-    return {"ok": True, **({"warning": warning} if warning else {})}
+    return JSONResponse({"ok": True})
 
 
 @app.get("/api/folders")
@@ -598,11 +596,13 @@ async def api_compose_send(body: ComposeSendRequest):
         post_slot_buffer  = int(await get_setting("meeting_post_slot_buffer_minutes") or "30")
         no_response_deadline = sent_at + timedelta(hours=no_response_hours)
 
+        name_match = re.search(r'^(.*?)\s*<[^>]+>$', to_raw)
+        client_display_name = name_match.group(1).strip() if name_match else to_raw
         proposal_id = await save_meeting_proposal(
             outgoing_message_id=compose_id,
             account=account,
             client_email=to_email,
-            client_name=to_raw,
+            client_name=client_display_name,
             subject=body.subject,
             duration_minutes=body.duration_minutes,
             sent_at=sent_at.isoformat(),
@@ -676,6 +676,12 @@ async def api_meeting_by_sender(sender: str = ""):
         slots = await get_slots_for_proposal(p["id"])
         results.append({"proposal": p, "slots": slots})
     return JSONResponse(results)
+
+
+@app.get("/api/meetings")
+async def api_get_all_meetings():
+    """Return all meeting proposals with their slots for the Calendar view."""
+    return JSONResponse(await get_all_proposals())
 
 
 @app.get("/api/meeting/{proposal_id}")

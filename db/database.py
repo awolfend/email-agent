@@ -1,6 +1,13 @@
 import aiosqlite
 import os
+import re
 from datetime import datetime, timezone, timedelta
+
+
+def _extract_addr(raw: str) -> str:
+    """Extract bare email address from 'Name <addr>' or plain address string."""
+    m = re.search(r'<([^>]+)>', raw or '')
+    return (m.group(1) if m else (raw or '')).strip().lower()
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "..", "config", "agent.db")
 
@@ -656,15 +663,49 @@ async def get_meeting_proposal(proposal_id: int) -> dict | None:
 
 
 async def get_open_proposals_for_client(client_email: str) -> list:
-    """Return pending proposals for a given client email — used for response detection."""
+    """Return pending proposals for a given client email — fuzzy address match."""
+    addr = _extract_addr(client_email)
+    if not addr or '@' not in addr:
+        return []
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT * FROM meeting_proposals WHERE status = 'pending' ORDER BY sent_at DESC"
+        ) as cursor:
+            rows = [dict(r) for r in await cursor.fetchall()]
+    def _matches(stored: str) -> bool:
+        s = _extract_addr(stored)
+        return s == addr or s in addr or addr in s
+    return [r for r in rows if _matches(r.get('client_email', ''))]
+
+
+async def get_all_proposals() -> list:
+    """Return all proposals with their slots, ordered pending-first."""
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute("""
             SELECT * FROM meeting_proposals
-            WHERE client_email = ? AND status = 'pending'
-            ORDER BY sent_at DESC
-        """, (client_email,)) as cursor:
-            return [dict(r) for r in await cursor.fetchall()]
+            ORDER BY
+                CASE status WHEN 'pending' THEN 0 WHEN 'confirmed' THEN 1
+                            WHEN 'expired' THEN 2 WHEN 'declined' THEN 3 ELSE 4 END,
+                sent_at DESC
+        """) as cursor:
+            proposals = [dict(r) for r in await cursor.fetchall()]
+        if not proposals:
+            return []
+        ids = [p["id"] for p in proposals]
+        placeholders = ",".join("?" * len(ids))
+        async with db.execute(
+            f"SELECT * FROM meeting_slots WHERE proposal_id IN ({placeholders}) ORDER BY slot_start ASC",
+            ids
+        ) as cursor:
+            all_slots = [dict(r) for r in await cursor.fetchall()]
+    slots_by = {}
+    for s in all_slots:
+        slots_by.setdefault(s["proposal_id"], []).append(s)
+    for p in proposals:
+        p["slots"] = slots_by.get(p["id"], [])
+    return proposals
 
 
 async def update_proposal_status(proposal_id: int, status: str):
