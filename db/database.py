@@ -674,8 +674,7 @@ async def get_open_proposals_for_client(client_email: str) -> list:
         ) as cursor:
             rows = [dict(r) for r in await cursor.fetchall()]
     def _matches(stored: str) -> bool:
-        s = _extract_addr(stored)
-        return s == addr or s in addr or addr in s
+        return _extract_addr(stored) == addr
     return [r for r in rows if _matches(r.get('client_email', ''))]
 
 
@@ -708,7 +707,36 @@ async def get_all_proposals() -> list:
     return proposals
 
 
+async def get_pending_calendar_invites() -> list[dict]:
+    """Return pending emails that have an iCal attachment, ordered newest-first."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """SELECT email_id, account, subject, sender, received_at, ical_data, graph_id
+               FROM action_log
+               WHERE ical_data IS NOT NULL AND status = 'pending'
+               ORDER BY received_at DESC"""
+        ) as cursor:
+            rows = await cursor.fetchall()
+    result = []
+    for r in rows:
+        d = dict(r)
+        if d.get("ical_data"):
+            try:
+                import json as _json
+                d["ical_event"] = _json.loads(d["ical_data"])
+            except Exception:
+                d["ical_event"] = None
+        result.append(d)
+    return result
+
+
+_VALID_PROPOSAL_STATUSES = {'pending', 'negotiating', 'confirmed', 'cancelled', 'expired'}
+_VALID_SLOT_STATUSES = {'tentative', 'confirmed', 'declined', 'released'}
+
 async def update_proposal_status(proposal_id: int, status: str):
+    if status not in _VALID_PROPOSAL_STATUSES:
+        raise ValueError(f"Invalid proposal status: {status!r}")
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
             "UPDATE meeting_proposals SET status = ? WHERE id = ?", (status, proposal_id)
@@ -750,6 +778,8 @@ async def get_slots_for_proposal(proposal_id: int) -> list:
 
 
 async def update_slot_status(slot_id: int, status: str):
+    if status not in _VALID_SLOT_STATUSES:
+        raise ValueError(f"Invalid slot status: {status!r}")
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
             "UPDATE meeting_slots SET status = ? WHERE id = ?", (status, slot_id)
@@ -759,7 +789,7 @@ async def update_slot_status(slot_id: int, status: str):
 
 async def get_expired_tentative_slots() -> list:
     """Return tentative slots whose auto_release_at has passed — for background expiry task."""
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S+00:00')
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute("""

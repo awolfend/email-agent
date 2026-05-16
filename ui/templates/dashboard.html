@@ -979,6 +979,7 @@
             transition: opacity 0.15s;
         }
         .sched-slot-btn:hover { opacity: 0.82; }
+        .sched-slot-match { background: var(--green, #22c55e); }
         .sched-loading { font-size: 12px; color: var(--muted); }
 
         /* ---- Meeting response panel ---- */
@@ -1540,23 +1541,7 @@
     </div>
 
     <div id="calendar-sidebar-section" style="display:none">
-        <div class="sidebar-section">Proposals</div>
-        <div class="stat-row active" onclick="filterProposals('all')" id="pfil-all">
-            <span class="label"><span class="dot dot-calendar"></span>All</span>
-            <span class="stat-badge" id="pstat-all">0</span>
-        </div>
-        <div class="stat-row" onclick="filterProposals('pending')" id="pfil-pending">
-            <span class="label"><span class="dot" style="background:var(--yellow)"></span>Pending</span>
-            <span class="stat-badge" id="pstat-pending">0</span>
-        </div>
-        <div class="stat-row" onclick="filterProposals('confirmed')" id="pfil-confirmed">
-            <span class="label"><span class="dot" style="background:var(--green)"></span>Confirmed</span>
-            <span class="stat-badge" id="pstat-confirmed">0</span>
-        </div>
-        <div class="stat-row" onclick="filterProposals('expired')" id="pfil-expired">
-            <span class="label"><span class="dot" style="background:var(--grey)"></span>Expired/Declined</span>
-            <span class="stat-badge" id="pstat-expired">0</span>
-        </div>
+        <div class="sidebar-section">Pending Invites <span class="stat-badge" id="pstat-pending">0</span></div>
     </div>
 
     <div style="flex:1"></div>
@@ -2187,6 +2172,7 @@
     }
 
     function updateAccountCounts() {
+        if (currentMode === 'calendar') return; // loadCalendarMode sets these
         let base = allEmails;
         if (currentMode === 'inbox') {
             base = base.filter(e => e.status === 'pending');
@@ -2338,7 +2324,10 @@
             const errors = await res.json();
             for (const [account, msg] of Object.entries(errors)) {
                 const el = document.getElementById(`auth-warn-${account}`);
-                if (el) el.style.display = msg ? 'inline' : 'none';
+                if (el) {
+                    el.style.display = msg ? 'inline' : 'none';
+                    if (msg) el.title = msg;
+                }
             }
         } catch (e) {}
     }
@@ -2370,6 +2359,7 @@
     function selectEmail(email) {
         currentEmail = email;
         draftVisible = false;
+        _pendingMeetingSlot = null;
 
         document.getElementById('empty-state').style.display = 'none';
         document.getElementById('email-detail').style.display = 'flex';
@@ -2412,8 +2402,14 @@
         }
 
         // Calendar invite panel
-        if (email.classification === 'calendar' && email.ical_data && currentMode === 'inbox') {
-            renderCalendarInvitePanel(email.ical_data);
+        if (email.classification === 'calendar' && currentMode === 'inbox') {
+            if (email.ical_data) {
+                renderCalendarInvitePanel(email.ical_data);
+            } else if (email.account === 'financial' || email.account === 'personal') {
+                fetchGraphEventDetails(email);
+            } else {
+                document.getElementById('calendar-invite-panel').classList.remove('show');
+            }
         } else {
             document.getElementById('calendar-invite-panel').classList.remove('show');
         }
@@ -2599,16 +2595,28 @@
         const to = document.getElementById('draft-to-input').value.trim() || extractEmailFromSender(currentEmail.sender || '');
         const subject = `Re: ${currentEmail.subject || ''}`;
 
+        // Attach pending meeting slot if it belongs to this email
+        const slot = (_pendingMeetingSlot?.email_id === doneId) ? _pendingMeetingSlot : null;
+        const payload = { to, subject, body: draft };
+        if (slot) {
+            payload.meeting_start = slot.start;
+            payload.meeting_end   = slot.end;
+            payload.client_name   = slot.client_name || '';
+        }
+
         showToast('⏳ Sending...');
         try {
             const res = await fetch(`/api/email/${doneId}/send`, {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ to, subject, body: draft })
+                body: JSON.stringify(payload)
             });
             const data = await res.json();
             if (data.ok) {
-                showToast('✉️ Reply sent — original archived');
+                _pendingMeetingSlot = null;
+                const meetLabel = (currentEmail?.account || 'financial') === 'gmail' ? 'Google Meet' : 'Teams';
+                const calMsg = data.join_url ? ` — ${meetLabel} invite sent` : '';
+                showToast(`✉️ Reply sent — original archived${calMsg}`);
                 const email = allEmails.find(e => e.email_id === doneId);
                 if (email) email.status = 'sent';
                 selectNextEmail(doneId);
@@ -3098,152 +3106,136 @@
     // ---- Calendar mode ----
 
     let allProposals = [];
-    let currentProposalFilter = 'all';
     let selectedProposalId = null;
+
+    let allInvites      = [];
+    let selectedInviteId = null;
 
     async function loadCalendarMode() {
         try {
-            const res  = await fetch('/api/meetings');
-            allProposals = await res.json();
+            const res = await fetch('/api/calendar/invites');
+            allInvites = await res.json();
         } catch(e) {
-            allProposals = [];
+            allInvites = [];
         }
-        updateProposalCounts();
-        renderProposalQueue();
-        renderCalendarDetail(null);
+        // Update sidebar counts
+        const acct = { financial: 0, gmail: 0, personal: 0 };
+        allInvites.forEach(inv => { if (acct[inv.account] !== undefined) acct[inv.account]++; });
+        document.getElementById('pstat-pending').textContent   = allInvites.length;
+        document.getElementById('stat-financial').textContent  = acct.financial;
+        document.getElementById('stat-gmail').textContent      = acct.gmail;
+        document.getElementById('stat-personal').textContent   = acct.personal;
+        document.getElementById('stat-acct-all').textContent   = allInvites.length;
+        renderInviteQueue();
+        renderInviteDetail(null);
     }
 
-    function updateProposalCounts() {
-        const counts = { all: allProposals.length, pending: 0, confirmed: 0, expired: 0 };
-        allProposals.forEach(p => {
-            if (p.status === 'pending')   counts.pending++;
-            else if (p.status === 'confirmed') counts.confirmed++;
-            else counts.expired++;
-        });
-        document.getElementById('pstat-all').textContent      = counts.all;
-        document.getElementById('pstat-pending').textContent   = counts.pending;
-        document.getElementById('pstat-confirmed').textContent = counts.confirmed;
-        document.getElementById('pstat-expired').textContent   = counts.expired;
-    }
-
-    function filterProposals(status) {
-        currentProposalFilter = status;
-        document.querySelectorAll('.stat-row[id^="pfil-"]').forEach(r => r.classList.remove('active'));
-        const el = document.getElementById(`pfil-${status}`);
-        if (el) el.classList.add('active');
-        renderProposalQueue();
-    }
-
-    function renderProposalQueue() {
+    function renderInviteQueue() {
         const list = document.getElementById('queue-list');
-        let proposals = allProposals;
-        if (currentProposalFilter !== 'all') {
-            if (currentProposalFilter === 'expired') {
-                proposals = proposals.filter(p => p.status === 'expired' || p.status === 'declined');
-            } else {
-                proposals = proposals.filter(p => p.status === currentProposalFilter);
-            }
-        }
-        if (!proposals.length) {
-            list.innerHTML = `<div style="padding:24px 16px;font-size:13px;color:var(--muted)">No proposals found.</div>`;
+        if (!allInvites.length) {
+            list.innerHTML = `<div style="padding:24px 16px;font-size:13px;color:var(--muted)">No pending calendar invites.</div>`;
             return;
         }
-        list.innerHTML = proposals.map(p => {
-            const sel = selectedProposalId === p.id ? 'selected' : '';
-            const sent = p.sent_at ? new Date(p.sent_at).toLocaleDateString('en-AU', { day:'numeric', month:'short' }) : '';
-            const tentative = (p.slots || []).filter(s => s.status === 'tentative').length;
-            const total     = (p.slots || []).length;
-            const slotsNote = total ? `${tentative} of ${total} slot${total > 1 ? 's' : ''} pending` : 'No slots';
-            const statusCls = `pstatus-${p.status === 'declined' ? 'declined' : p.status}`;
-            const displayStatus = p.status === 'declined' ? 'Declined' :
-                                  p.status === 'expired'  ? 'Expired'  :
-                                  p.status === 'confirmed'? 'Confirmed': 'Pending';
+        list.innerHTML = allInvites.map(inv => {
+            const sel = selectedInviteId === inv.email_id ? 'selected' : '';
+            const ev  = inv.ical_event || {};
+            const when = ev.start
+                ? new Date(ev.start).toLocaleDateString('en-AU', { weekday:'short', day:'numeric', month:'short' })
+                : (inv.received_at ? new Date(inv.received_at).toLocaleDateString('en-AU', { day:'numeric', month:'short' }) : '');
+            const organizer = ev.organizer || inv.sender || '';
             return `
-            <div class="email-item ${sel}" onclick="selectProposal(${p.id})">
+            <div class="email-item ${sel}" onclick="selectInvite(${JSON.stringify(inv.email_id).replace(/"/g,'&quot;')})">
                 <div class="email-item-top">
-                    <span class="email-sender">${escHtml(p.client_name || p.client_email || 'Unknown')}</span>
-                    <span class="email-time">${sent}</span>
+                    <span class="email-sender">${escHtml(organizer)}</span>
+                    <span class="email-time">${escHtml(when)}</span>
                 </div>
-                <div class="email-subject">${escHtml(p.subject || '(no subject)')}</div>
-                <div class="email-meta">
-                    <span class="proposal-status ${statusCls}">${displayStatus}</span>
-                    <span style="font-size:11px;color:var(--muted)">${slotsNote}</span>
-                </div>
+                <div class="email-subject">${escHtml(ev.summary || inv.subject || '(no title)')}</div>
+                <div class="email-meta"><span style="font-size:11px;color:var(--muted)">${inv.account}</span></div>
             </div>`;
         }).join('');
     }
 
-    function selectProposal(id) {
-        selectedProposalId = id;
-        renderProposalQueue();
-        const proposal = allProposals.find(p => p.id === id);
-        renderCalendarDetail(proposal);
+    function selectInvite(emailId) {
+        selectedInviteId = emailId;
+        renderInviteQueue();
+        const invite = allInvites.find(i => i.email_id === emailId);
+        renderInviteDetail(invite);
         if (isMobile()) applyMobilePanelState('detail');
     }
 
-    function renderCalendarDetail(proposal) {
+    function renderInviteDetail(invite) {
         const panel = document.getElementById('calendar-mode-panel');
-        if (!proposal) {
-            panel.innerHTML = `<div class="cal-empty">Select a proposal to view details.</div>`;
+        if (!invite) {
+            panel.innerHTML = `<div class="cal-empty">Select an invite to view details.</div>`;
             return;
         }
-        const slots  = proposal.slots || [];
-        const acctLabels = { financial: '💼 Financial Planning', gmail: '📧 Positive Tax', personal: '🏠 Personal' };
-        const sent = proposal.sent_at
-            ? new Date(proposal.sent_at).toLocaleString('en-AU', { dateStyle:'medium', timeStyle:'short' })
-            : '—';
+        const ev = invite.ical_event || {};
+        const fmtDt = iso => {
+            if (!iso) return '—';
+            try { return new Date(iso).toLocaleString('en-AU', { weekday:'long', day:'numeric', month:'long', year:'numeric', hour:'numeric', minute:'2-digit', hour12:true }); }
+            catch(e) { return iso; }
+        };
+        const rows = [];
+        if (ev.start) rows.push(`<div class="cal-detail-row"><span class="ci-meta-label">When</span> ${escHtml(fmtDt(ev.start))}${ev.end ? ' – ' + escHtml(fmtDt(ev.end)) : ''}</div>`);
+        if (ev.organizer) rows.push(`<div class="cal-detail-row"><span class="ci-meta-label">From</span> ${escHtml(ev.organizer)}</div>`);
+        if (ev.location)  rows.push(`<div class="cal-detail-row"><span class="ci-meta-label">Where</span> ${escHtml(ev.location)}</div>`);
+        const acctLabels = { financial: '💼 Financial', gmail: '📧 Tax', personal: '🏠 Personal' };
+        rows.push(`<div class="cal-detail-row"><span class="ci-meta-label">Account</span> ${acctLabels[invite.account] || invite.account}</div>`);
 
-        const statusCls = `pstatus-${proposal.status === 'declined' ? 'declined' : proposal.status}`;
-        const displayStatus = proposal.status === 'declined' ? 'Declined' :
-                              proposal.status === 'expired'  ? 'Expired'  :
-                              proposal.status === 'confirmed'? 'Confirmed': 'Pending';
-
-        let slotsHtml = '';
-        if (!slots.length) {
-            slotsHtml = `<div class="cal-no-proposals">No slots recorded for this proposal.</div>`;
-        } else {
-            slotsHtml = slots.map(s => {
-                const start = new Date(s.slot_start);
-                const end   = new Date(s.slot_end);
-                const timeStr = start.toLocaleString('en-AU', { weekday:'short', day:'numeric', month:'short',
-                    hour:'numeric', minute:'2-digit', hour12:true }) +
-                    ' – ' + end.toLocaleTimeString('en-AU', { hour:'numeric', minute:'2-digit', hour12:true });
-                const sCls = s.status === 'tentative' ? 'mr-slot-tentative' :
-                             s.status === 'confirmed'  ? 'mr-slot-confirmed'  : 'mr-slot-declined';
-                const statusLabel = s.status.charAt(0).toUpperCase() + s.status.slice(1);
-                let btns = '';
-                if (proposal.status === 'pending' && s.status === 'tentative') {
-                    btns = `<button class="mr-confirm-btn" onclick="calConfirmSlot(${proposal.id},${s.id})">✓ Confirm</button>
-                            <button class="mr-decline-slot-btn" onclick="calDeclineSlot(${proposal.id},${s.id})">✕</button>`;
-                }
-                return `<div class="cal-slot-row">
-                    <span class="cal-slot-time">${escHtml(timeStr)}</span>
-                    <span class="mr-slot-status ${sCls}">${statusLabel}</span>
-                    ${btns}
-                </div>`;
-            }).join('');
-        }
-
-        let declineAll = '';
-        if (proposal.status === 'pending' && slots.some(s => s.status === 'tentative')) {
-            declineAll = `<button class="mr-decline-all-btn" onclick="calDeclineAll(${proposal.id})" style="margin-top:4px;">✕ Decline All — No Longer Available</button>`;
-        }
-
+        const emailIdAttr = escHtml(invite.email_id);
         panel.innerHTML = `
         <div class="cal-proposal-detail">
-            <div class="cal-detail-title">${escHtml(proposal.subject || '(no subject)')}</div>
-            <div class="cal-detail-meta">
-                <span>Client: ${escHtml(proposal.client_name || proposal.client_email || '—')}</span>
-                <span>${escHtml(proposal.client_email || '')}</span>
-                <span>${acctLabels[proposal.account] || proposal.account}</span>
-                <span>${proposal.duration_minutes || 60} min</span>
-                <span>Sent ${sent}</span>
+            <div class="cal-detail-title">${escHtml(ev.summary || invite.subject || '(no title)')}</div>
+            <div class="cal-detail-meta" style="flex-direction:column;gap:4px;margin-bottom:12px;">${rows.join('')}</div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                <button class="mr-confirm-btn" onclick="calAcceptInvite('${emailIdAttr}','${invite.account}')">✓ Accept</button>
+                <button class="mr-decline-slot-btn" style="padding:6px 14px;" onclick="calDeclineInvite('${emailIdAttr}','${invite.account}')">✕ Decline</button>
+                <button class="mr-decline-slot-btn" style="padding:6px 14px;" onclick="calProposeAlternative('${emailIdAttr}','${invite.account}',${JSON.stringify(ev.organizer||'').replace(/"/g,'&quot;')},${JSON.stringify(invite.subject||'').replace(/"/g,'&quot;')})">↩ Propose Alternative</button>
             </div>
-            <span class="proposal-status ${statusCls}">${displayStatus}</span>
-            <div class="cal-section-title" style="margin-top:4px;">Slots</div>
-            ${slotsHtml}
-            ${declineAll}
         </div>`;
+    }
+
+    async function calAcceptInvite(emailId, account) {
+        showToast('✓ Accepting…');
+        const res  = await fetch(`/api/email/${encodeURIComponent(emailId)}/calendar/accept`, { method: 'POST' });
+        const data = await res.json();
+        if (data.ok) {
+            showToast('✓ Accepted — response sent to organiser');
+            allInvites = allInvites.filter(i => i.email_id !== emailId);
+            selectedInviteId = null;
+            renderInviteQueue();
+            renderInviteDetail(null);
+            updateAccountCounts();
+        } else {
+            showToast(`Accept failed: ${data.error || 'unknown'}`);
+        }
+    }
+
+    async function calDeclineInvite(emailId, account) {
+        showToast('✕ Declining…');
+        const res  = await fetch(`/api/email/${encodeURIComponent(emailId)}/calendar/decline`, { method: 'POST' });
+        const data = await res.json();
+        if (data.ok) {
+            showToast('✕ Declined — response sent to organiser');
+            allInvites = allInvites.filter(i => i.email_id !== emailId);
+            selectedInviteId = null;
+            renderInviteQueue();
+            renderInviteDetail(null);
+            updateAccountCounts();
+        } else {
+            showToast(`Decline failed: ${data.error || 'unknown'}`);
+        }
+    }
+
+    function calProposeAlternative(emailId, account, organizer, subject) {
+        openCompose(account);
+        setTimeout(() => {
+            document.getElementById('compose-to').value      = organizer;
+            document.getElementById('compose-subject').value = `Re: ${subject}`;
+            document.getElementById('compose-prompt').value  = 'Propose alternative meeting times';
+            detectMeetingIntent();
+            composeDraftAutoSave();
+        }, 50);
     }
 
     async function calConfirmSlot(proposalId, slotId) {
@@ -3251,8 +3243,18 @@
         const data = await res.json();
         if (data.ok) {
             showToast('✓ Slot confirmed — calendar invite sent');
+            selectedProposalId = null;
             await loadCalendarMode();
-            selectProposal(proposalId);
+            // Open compose overlay with pre-filled confirmation draft
+            if (data.draft_body) {
+                openCompose(data.account || 'financial');
+                document.getElementById('compose-to').value      = data.draft_to || '';
+                document.getElementById('compose-subject').value = data.draft_subject || '';
+                const draftEl = document.getElementById('compose-draft');
+                draftEl.value = data.draft_body;
+                draftEl.style.display = '';
+                document.getElementById('compose-draft-label').style.display = '';
+            }
         } else {
             showToast(`Confirm failed: ${data.error || 'unknown'}`);
         }
@@ -3264,7 +3266,6 @@
         if (data.ok) {
             showToast('Slot removed');
             await loadCalendarMode();
-            selectProposal(proposalId);
         } else {
             showToast(`Decline failed: ${data.error || 'unknown'}`);
         }
@@ -3276,7 +3277,6 @@
         if (data.ok) {
             showToast('All slots declined');
             await loadCalendarMode();
-            renderCalendarDetail(null);
         } else {
             showToast(`Decline failed: ${data.error || 'unknown'}`);
         }
@@ -3287,6 +3287,16 @@
     let currentMeetingProposalId = null;
 
     // ---- Calendar invite panel ----
+
+    async function fetchGraphEventDetails(email) {
+        try {
+            const res  = await fetch(`/api/email/${encodeURIComponent(email.email_id)}/event-details`);
+            const data = await res.json();
+            if (data.ok && currentEmail && currentEmail.email_id === email.email_id) {
+                renderCalendarInvitePanel(data.event);
+            }
+        } catch(e) { /* no event data available — panel stays hidden */ }
+    }
 
     function renderCalendarInvitePanel(icalDataRaw) {
         let ev;
@@ -3344,21 +3354,32 @@
             }
 
             let html = '';
+            const timesJson = JSON.stringify(data.proposed_times || []).replace(/"/g, '&quot;');
             if (data.topic) {
                 html += `<div class="sched-topic">${escHtml(data.topic)}</div>`;
             }
             if (data.proposed_times && data.proposed_times.length) {
-                html += `<div class="sched-label">Sender proposes</div>`;
+                html += `<div class="sched-label">They propose</div>`;
                 html += `<div class="sched-proposed">${data.proposed_times.map(t => escHtml(t)).join(' &bull; ')}</div>`;
             }
+            if (data.matched_slots && data.matched_slots.length) {
+                html += `<div class="sched-label">✓ You're free — click to confirm</div>`;
+                html += `<div class="sched-slots">`;
+                for (const slot of data.matched_slots) {
+                    const slotJson = JSON.stringify(slot).replace(/"/g, '&quot;');
+                    html += `<button class="sched-slot-btn sched-slot-match" onclick="_confirmSlot(${slotJson}, ${timesJson})">${escHtml(_formatSlotLabel(slot.start, slot.end))}</button>`;
+                }
+                html += `</div>`;
+            }
             if (data.free_slots && data.free_slots.length) {
-                html += `<div class="sched-label">Your next available (${data.duration_minutes} min)</div>`;
+                const altLabel = (data.matched_slots && data.matched_slots.length)
+                    ? 'Or propose a different time'
+                    : `Your next available (${data.duration_minutes} min)`;
+                html += `<div class="sched-label">${altLabel}</div>`;
                 html += `<div class="sched-slots">`;
                 for (const slot of data.free_slots) {
-                    const label = _formatSlotLabel(slot.start, slot.end);
                     const slotJson = JSON.stringify(slot).replace(/"/g, '&quot;');
-                    const timesJson = JSON.stringify(data.proposed_times || []).replace(/"/g, '&quot;');
-                    html += `<button class="sched-slot-btn" onclick="_confirmSlot(${slotJson}, ${timesJson})">${escHtml(label)}</button>`;
+                    html += `<button class="sched-slot-btn" onclick="_confirmSlot(${slotJson}, ${timesJson})">${escHtml(_formatSlotLabel(slot.start, slot.end))}</button>`;
                 }
                 html += `</div>`;
             }
@@ -3380,6 +3401,8 @@
         } catch(e) { return start; }
     }
 
+    let _pendingMeetingSlot = null;   // { start, end, client_name, email_id }
+
     function _confirmSlot(slot, proposedTimes) {
         const s = new Date(slot.start);
         const label = s.toLocaleDateString('en-AU', { weekday: 'long', day: 'numeric', month: 'long' }) +
@@ -3387,14 +3410,29 @@
         const theirPart = proposedTimes && proposedTimes.length
             ? `Sender proposed: ${proposedTimes.join(', ')}. `
             : '';
+        const meetLabel = (currentEmail?.account || 'financial') === 'gmail' ? 'Google Meet' : 'Teams';
+
+        // Store the slot so doSend can fire the calendar invite when the email is sent
+        _pendingMeetingSlot = {
+            start:       slot.start,
+            end:         slot.end,
+            client_name: currentEmail ? extractNameFromSender(currentEmail.sender || '') : '',
+            email_id:    currentEmail?.email_id || null,
+        };
+
         document.getElementById('draft-guidance-input').value =
-            `${theirPart}Confirm ${label} as the meeting time. Write a brief, clear confirmation.`;
+            `${theirPart}Confirm ${label} as the meeting time. Write a brief, clear confirmation and say a ${meetLabel} calendar invite has been sent.`;
         if (!draftVisible) {
             draftVisible = true;
             document.getElementById('draft-section').style.display = 'flex';
             document.getElementById('resizer-v').style.display = 'block';
         }
         generateDraft();
+    }
+
+    function extractNameFromSender(sender) {
+        const m = sender.match(/^([^<@]+?)\s*</);
+        return m ? m[1].trim() : '';
     }
 
     async function loadMeetingResponsePanel(sender) {
@@ -3835,7 +3873,12 @@
             });
             const data = await res.json();
             if (data.ok) {
-                showToast(`✓ Sent${hasMeeting ? ' with meeting proposal' : ''}`);
+                const meetLabel = composeAccount === 'gmail' ? 'Google Meet' : 'Teams';
+                const meetMsg = data.join_url
+                    ? ` — ${meetLabel} invite sent`
+                    : (hasMeeting && rawSlots.length > 1 ? ' with meeting proposal' : '');
+                showToast(`✓ Sent${meetMsg}`);
+                if (data.hold_warning) showToast('⚠ One or more calendar holds failed — check your calendar');
                 closeCompose();
                 await loadQueue();
             } else {

@@ -178,8 +178,7 @@ async def get_emails(account: str) -> list:
         url = f"{base}/mailFolders/inbox/messages"
         params = {
             "$top": 100,
-            "$select": "id,internetMessageId,subject,from,receivedDateTime,bodyPreview,isRead,body,meetingMessageType",
-            "$expand": "event($select=start,end,location,organizer)",
+            "$select": "id,internetMessageId,subject,from,receivedDateTime,bodyPreview,isRead,body",
         }
 
         while url:
@@ -195,25 +194,6 @@ async def get_emails(account: str) -> list:
                 content = raw_body.get("content", "")
                 content_type = raw_body.get("contentType", "text")
                 email["fullBody"] = strip_html(content) if content_type == "html" else content.strip()
-
-                # Extract structured event data for meeting requests
-                meeting_type = email.get("meetingMessageType", "")
-                event_obj    = email.get("event")
-                if meeting_type and event_obj:
-                    s   = event_obj.get("start", {})
-                    e   = event_obj.get("end",   {})
-                    org = (event_obj.get("organizer") or {}).get("emailAddress", {})
-                    email["ical_event"] = {
-                        "summary":   email.get("subject", ""),
-                        "start":     s.get("dateTime"),
-                        "start_tz":  s.get("timeZone", "UTC"),
-                        "end":       e.get("dateTime"),
-                        "end_tz":    e.get("timeZone", "UTC"),
-                        "organizer": org.get("address", ""),
-                        "location":  (event_obj.get("location") or {}).get("displayName", ""),
-                        "meeting_type": meeting_type,
-                        "source": "graph",
-                    }
 
                 all_emails.append(email)
             url = data.get("@odata.nextLink")
@@ -369,7 +349,7 @@ async def get_message_graph_id(account: str, internet_message_id: str) -> str | 
     """Find the current folder-scoped Graph ID for a message using its stable
     internetMessageId. Searches across all folders so works after archive/move."""
     token = await get_valid_token(account)
-    safe_id = internet_message_id.replace("'", "''")
+    safe_id = internet_message_id.strip('<>').replace("'", "''")
     async with httpx.AsyncClient(timeout=15.0) as client:
         resp = await client.get(
             f"{_mailbox_base(account)}/messages",
@@ -383,6 +363,36 @@ async def get_message_graph_id(account: str, internet_message_id: str) -> str | 
         resp.raise_for_status()
         items = resp.json().get("value", [])
         return items[0]["id"] if items else None
+
+
+async def get_message_event(account: str, graph_id: str) -> dict | None:
+    """Fetch structured event data for a single eventMessage via $expand=event."""
+    token = await get_valid_token(account)
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        resp = await client.get(
+            f"{_mailbox_base(account)}/messages/{graph_id}",
+            headers={"Authorization": f"Bearer {token}"},
+            params={"$select": "subject,meetingMessageType", "$expand": "event"},
+        )
+        if resp.status_code != 200:
+            return None
+        data = resp.json()
+        event_obj = data.get("event")
+        if not event_obj:
+            return None
+        s   = event_obj.get("start", {})
+        e   = event_obj.get("end", {})
+        org = (event_obj.get("organizer") or {}).get("emailAddress", {})
+        return {
+            "summary":   data.get("subject", ""),
+            "start":     s.get("dateTime"),
+            "start_tz":  s.get("timeZone", "UTC"),
+            "end":       e.get("dateTime"),
+            "end_tz":    e.get("timeZone", "UTC"),
+            "organizer": org.get("address", ""),
+            "location":  (event_obj.get("location") or {}).get("displayName", ""),
+            "source":    "graph",
+        }
 
 
 async def hard_delete_email(account: str, email_id: str):
@@ -612,10 +622,10 @@ async def create_calendar_hold(account: str, start_iso: str, end_iso: str, title
 
 
 async def create_confirmed_event(account: str, start_iso: str, end_iso: str,
-                                  title: str, client_email: str, client_name: str = "") -> str:
+                                  title: str, client_email: str, client_name: str = "") -> tuple[str, str]:
     """
-    Create a confirmed calendar event with the client as a required attendee.
-    Graph sends them an invite automatically. Returns the event id, or "" on failure.
+    Create a confirmed calendar event with a Teams meeting and the client as a required attendee.
+    Graph sends them an invite automatically. Returns (event_id, teams_join_url), or ("", "") on failure.
     """
     try:
         token = await get_valid_token(account)
@@ -630,6 +640,8 @@ async def create_confirmed_event(account: str, start_iso: str, end_iso: str,
             "start": {"dateTime": s_dt.strftime("%Y-%m-%dT%H:%M:%S"), "timeZone": "UTC"},
             "end":   {"dateTime": e_dt.strftime("%Y-%m-%dT%H:%M:%S"), "timeZone": "UTC"},
             "attendees": [attendee],
+            "isOnlineMeeting": True,
+            "onlineMeetingProvider": "teamsForBusiness",
         }
         async with httpx.AsyncClient(timeout=20.0) as client:
             resp = await client.post(
@@ -638,10 +650,49 @@ async def create_confirmed_event(account: str, start_iso: str, end_iso: str,
                 json=payload,
             )
             resp.raise_for_status()
-            return resp.json().get("id", "")
+            data     = resp.json()
+            event_id = data.get("id", "")
+            join_url = (data.get("onlineMeeting") or {}).get("joinUrl", "")
+            return event_id, join_url
     except Exception as e:
         logger.warning(f"create_confirmed_event failed ({account}): {e}")
-        return ""
+        return "", ""
+
+
+async def create_online_hold(account: str, start_iso: str, end_iso: str, title: str = "Hold") -> tuple[str, str]:
+    """
+    Create a tentative calendar hold with a Teams meeting link (no attendees).
+    Used when proposing a specific time so the join URL can be included in the email.
+    Returns (event_id, teams_join_url), or ("", "") on failure.
+    """
+    try:
+        token = await get_valid_token(account)
+        base  = _mailbox_base(account)
+        s_dt  = datetime.fromisoformat(start_iso).astimezone(timezone.utc)
+        e_dt  = datetime.fromisoformat(end_iso).astimezone(timezone.utc)
+        payload = {
+            "subject": title,
+            "showAs": "tentative",
+            "isAllDay": False,
+            "start": {"dateTime": s_dt.strftime("%Y-%m-%dT%H:%M:%S"), "timeZone": "UTC"},
+            "end":   {"dateTime": e_dt.strftime("%Y-%m-%dT%H:%M:%S"), "timeZone": "UTC"},
+            "isOnlineMeeting": True,
+            "onlineMeetingProvider": "teamsForBusiness",
+        }
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            resp = await client.post(
+                f"{base}/calendar/events",
+                headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+                json=payload,
+            )
+            resp.raise_for_status()
+            data     = resp.json()
+            event_id = data.get("id", "")
+            join_url = (data.get("onlineMeeting") or {}).get("joinUrl", "")
+            return event_id, join_url
+    except Exception as e:
+        logger.warning(f"create_online_hold failed ({account}): {e}")
+        return "", ""
 
 
 async def delete_calendar_event(account: str, event_id: str) -> bool:

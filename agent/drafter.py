@@ -6,6 +6,17 @@ import logging
 from dotenv import load_dotenv
 from db.database import get_setting
 
+_INVISIBLE_RE = re.compile(
+    "[­​‌‍‎‏⁠﻿᠎]+"
+)
+
+
+def _sanitize_body(text: str) -> str:
+    text = _INVISIBLE_RE.sub("", text)
+    text = re.sub(r"[ \t]{3,}", " ", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
+
 load_dotenv("config/.env")
 
 logger = logging.getLogger(__name__)
@@ -206,7 +217,7 @@ async def generate_draft(account: str, sender: str, subject: str, body: str,
         account=account,
         sender=sender,
         subject=subject,
-        body=body[:4000],
+        body=_sanitize_body(body)[:4000],
         guidance_block=guidance_block,
         crm_block=crm_block,
     )
@@ -214,11 +225,18 @@ async def generate_draft(account: str, sender: str, subject: str, body: str,
         prompt = voice_block + "\n" + prompt
 
     draft = ""
-    try:
-        draft = await _call_claude(prompt)
-        logger.info(f"Draft generated via Claude for: {subject[:50]}")
-    except Exception as e:
-        logger.warning(f"Claude failed ({e}), trying OpenAI fallback")
+    last_claude_err = None
+    for attempt in range(2):
+        try:
+            draft = await _call_claude(prompt)
+            logger.info(f"Draft generated via Claude for: {subject[:50]}")
+            break
+        except Exception as e:
+            last_claude_err = e
+            if attempt == 0:
+                await asyncio.sleep(2)
+    if not draft:
+        logger.warning(f"Claude failed after retry ({last_claude_err}), trying OpenAI fallback")
         try:
             draft = await _call_openai(prompt)
             logger.info(f"Draft generated via OpenAI for: {subject[:50]}")
@@ -234,22 +252,34 @@ async def generate_draft(account: str, sender: str, subject: str, body: str,
 
 _SCHEDULING_EXTRACT_PROMPT = """Analyse this email and detect if the sender is making a scheduling request.
 
+Today is {today} (Australia/Brisbane, UTC+10).
+
 Return JSON only, no explanation.
-Format: {{"is_scheduling": true, "proposed_times": ["phrase 1", "phrase 2"], "topic": "meeting purpose"}}
+Format: {{
+  "is_scheduling": true,
+  "proposed_times": ["verbatim phrase 1", "verbatim phrase 2"],
+  "proposed_slots": [{{"start": "2026-05-20T14:00:00+10:00", "end": "2026-05-20T15:00:00+10:00"}}],
+  "topic": "meeting purpose"
+}}
 Or if not a scheduling request: {{"is_scheduling": false}}
 
 Rules:
 - is_scheduling is true when the sender proposes specific times/dates OR asks for your availability
-- proposed_times contains verbatim time/date phrases from the email (empty array if no specific times stated)
-- topic is a brief description of the meeting purpose (empty string if unclear)
+- proposed_times: verbatim time/date phrases from the email (empty array if none)
+- proposed_slots: resolved ISO 8601 datetime ranges (UTC+10) for each proposed time:
+  - Only include if the date can be determined from context (skip "sometime next week" etc.)
+  - Assume 1-hour duration if no end time stated
+  - "afternoon" = 14:00 start; "morning" = 09:00 start; "end of day" = 16:00 start
+  - If only a day is given with no time, do NOT include in proposed_slots
+- topic: brief meeting purpose (empty string if unclear)
 
 Subject: {subject}
 From: {sender}
 Body: {body}"""
 
 
-async def extract_scheduling_intent(subject: str, sender: str, body: str) -> dict:
-    prompt = _SCHEDULING_EXTRACT_PROMPT.format(subject=subject, sender=sender, body=body[:2000])
+async def extract_scheduling_intent(subject: str, sender: str, body: str, today: str = "") -> dict:
+    prompt = _SCHEDULING_EXTRACT_PROMPT.format(subject=subject, sender=sender, body=_sanitize_body(body)[:2000], today=today)
     try:
         raw = await _call_claude(prompt)
         match = re.search(r'\{.*\}', raw, re.DOTALL)
@@ -289,7 +319,7 @@ async def generate_compose_draft(
         lines = [f"\n\nMeeting proposal — duration: {duration_minutes} minutes"]
         if len(meeting_slots) == 1:
             lines.append(f"Proposed time: {meeting_slots[0]}")
-            lines.append("Present this single time in the email body. Mention that a calendar invite will follow once confirmed.")
+            lines.append("Present this single time in the email body. State that a calendar invite with meeting details has been sent.")
         else:
             lines.append("Proposed times (list these in the email body and ask the client to confirm which suits):")
             for i, s in enumerate(meeting_slots, 1):
@@ -313,11 +343,18 @@ async def generate_compose_draft(
         full_prompt = voice_block + "\n" + full_prompt
 
     raw = ""
-    try:
-        raw = await _call_claude(full_prompt)
-        logger.info(f"Compose draft generated via Claude for: {to[:50]}")
-    except Exception as e:
-        logger.warning(f"Claude failed for compose ({e}), trying OpenAI fallback")
+    last_claude_err = None
+    for attempt in range(2):
+        try:
+            raw = await _call_claude(full_prompt)
+            logger.info(f"Compose draft generated via Claude for: {to[:50]}")
+            break
+        except Exception as e:
+            last_claude_err = e
+            if attempt == 0:
+                await asyncio.sleep(2)
+    if not raw:
+        logger.warning(f"Claude failed for compose after retry ({last_claude_err}), trying OpenAI fallback")
         try:
             raw = await _call_openai(full_prompt)
             logger.info(f"Compose draft generated via OpenAI for: {to[:50]}")

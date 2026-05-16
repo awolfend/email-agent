@@ -38,6 +38,8 @@ from connectors.graph import (
     create_calendar_hold as graph_create_hold,
     delete_calendar_event as graph_delete_event,
     create_confirmed_event as graph_create_confirmed,
+    create_online_hold as graph_create_online_hold,
+    get_message_event as graph_get_message_event,
 )
 from connectors.gmail import (
     get_auth_url as gmail_auth_url,
@@ -61,6 +63,7 @@ from connectors.gmail import (
     create_calendar_hold as gmail_create_hold,
     delete_calendar_event as gmail_delete_event,
     create_confirmed_event as gmail_create_confirmed,
+    create_online_hold as gmail_create_online_hold,
 )
 from db.database import (
     init_db, get_queue, get_stats,
@@ -79,6 +82,7 @@ from db.database import (
     get_meeting_proposal, get_slots_for_proposal,
     get_open_proposals_for_client, get_all_proposals,
     update_slot_status, update_proposal_status,
+    get_pending_calendar_invites,
 )
 from agent.poller import start_scheduler, poll_all
 from agent.drafter import generate_draft, generate_compose_draft
@@ -128,6 +132,9 @@ class SendRequest(BaseModel):
     to: str
     subject: str
     body: str
+    meeting_start: str = ""
+    meeting_end: str = ""
+    client_name: str = ""
 
 class ClearHistoryRequest(BaseModel):
     scope: str  # 'sent' | 'archived' | 'deleted' | 'all'
@@ -254,6 +261,9 @@ async def api_send(email_id: str, body: SendRequest):
     graph_id = email.get("graph_id") or email_id
     try:
         if email["account"] in ("financial", "personal"):
+            live_id = await graph_get_message_id(email["account"], email_id)
+            if live_id:
+                graph_id = live_id
             _filing_email = os.getenv("FILING_EMAIL_FINANCIAL")
             cc = [_filing_email] if email["account"] == "financial" and _filing_email else None
             await graph_reply_to_email(email["account"], graph_id, recipients, body.body, cc=cc)
@@ -268,7 +278,29 @@ async def api_send(email_id: str, body: SendRequest):
         else:
             return JSONResponse({"ok": False, "error": f"Unknown account: {email['account']}"}, status_code=400)
         await update_email_status(email_id, "sent", "replied")
-        return {"ok": True}
+
+        # If the user confirmed a meeting slot, create a calendar event with the client as attendee
+        join_url = None
+        if body.meeting_start and body.meeting_end:
+            client_emails = extract_email_addresses(body.to)
+            client_email  = client_emails[0] if client_emails else ""
+            if client_email:
+                meet_subject = re.sub(r'^Re:\s*', '', body.subject, flags=re.IGNORECASE).strip() or body.subject
+                try:
+                    if email["account"] == "gmail":
+                        _, join_url = await gmail_create_confirmed(
+                            body.meeting_start, body.meeting_end,
+                            meet_subject, client_email, body.client_name,
+                        )
+                    else:
+                        _, join_url = await graph_create_confirmed(
+                            email["account"], body.meeting_start, body.meeting_end,
+                            meet_subject, client_email, body.client_name,
+                        )
+                except Exception as e:
+                    logger.warning(f"Calendar event creation failed after send: {e}")
+
+        return {"ok": True, "join_url": join_url}
     except Exception as e:
         return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
 
@@ -280,6 +312,7 @@ async def api_send_followup(email_id: str, body: SendRequest):
     recipients = extract_email_addresses(body.to)
     if not recipients:
         return JSONResponse({"ok": False, "error": "No valid recipient address"}, status_code=400)
+    await update_draft_reply(email_id, body.body)
     try:
         if email["account"] in ("financial", "personal"):
             _filing_email = os.getenv("FILING_EMAIL_FINANCIAL")
@@ -289,7 +322,6 @@ async def api_send_followup(email_id: str, body: SendRequest):
             await gmail_send_email(", ".join(recipients), body.subject, body.body)
         else:
             return JSONResponse({"ok": False, "error": f"Unknown account: {email['account']}"}, status_code=400)
-        await update_draft_reply(email_id, body.body)
         return {"ok": True}
     except Exception as e:
         return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
@@ -587,17 +619,65 @@ async def api_compose_send(body: ComposeSendRequest):
     )
     await update_email_status(compose_id, "sent", "sent_compose")
 
-    # ---- Calendar holds for meeting slots ----
+    # ---- Calendar holds / confirmed event for meeting slots ----
     proposal_id = None
+    join_url    = None
+    hold_failed = False
     valid_slots = [s for s in body.meeting_slots if s.get("raw") and s["raw"].get("start") and s["raw"].get("end")]
 
-    if valid_slots:
+    name_match = re.search(r'^(.*?)\s*<[^>]+>$', to_raw)
+    client_display_name = name_match.group(1).strip() if name_match else to_raw
+
+    if len(valid_slots) == 1:
+        # ---- Single slot: confirmed event with Teams/Meet + tentative mirrors ----
+        raw   = valid_slots[0]["raw"]
+        s_iso = raw["start"]
+        e_iso = raw["end"]
+        meet_subject = body.subject
+        own_id = fin_mirror = tax_mirror = ""
+
+        if account == "financial":
+            r = await asyncio.gather(
+                graph_create_confirmed("financial", s_iso, e_iso, meet_subject, to_email, client_display_name),
+                gmail_create_hold(s_iso, e_iso),
+                return_exceptions=True,
+            )
+            if not isinstance(r[0], Exception): own_id, join_url = r[0]
+            else: logger.warning(f"Financial confirmed event failed: {r[0]}"); hold_failed = True
+            if not isinstance(r[1], Exception): tax_mirror = r[1]
+            else: logger.warning(f"Gmail mirror hold failed: {r[1]}"); hold_failed = True
+
+        elif account == "gmail":
+            r = await asyncio.gather(
+                gmail_create_confirmed(s_iso, e_iso, meet_subject, to_email, client_display_name),
+                graph_create_hold("financial", s_iso, e_iso),
+                return_exceptions=True,
+            )
+            if not isinstance(r[0], Exception): own_id, join_url = r[0]
+            else: logger.warning(f"Gmail confirmed event failed: {r[0]}"); hold_failed = True
+            if not isinstance(r[1], Exception): fin_mirror = r[1]
+            else: logger.warning(f"Financial mirror hold failed: {r[1]}"); hold_failed = True
+
+        elif account == "personal":
+            r = await asyncio.gather(
+                graph_create_confirmed("personal", s_iso, e_iso, meet_subject, to_email, client_display_name),
+                graph_create_hold("financial", s_iso, e_iso),
+                gmail_create_hold(s_iso, e_iso),
+                return_exceptions=True,
+            )
+            if not isinstance(r[0], Exception): own_id, join_url = r[0]
+            else: logger.warning(f"Personal confirmed event failed: {r[0]}"); hold_failed = True
+            if not isinstance(r[1], Exception): fin_mirror = r[1]
+            else: logger.warning(f"Financial mirror hold failed: {r[1]}"); hold_failed = True
+            if not isinstance(r[2], Exception): tax_mirror = r[2]
+            else: logger.warning(f"Gmail mirror hold failed: {r[2]}"); hold_failed = True
+
+    elif len(valid_slots) > 1:
+        # ---- Multiple slots: tentative holds + proposal tracking ----
         no_response_hours = int(await get_setting("meeting_no_response_hours") or "36")
         post_slot_buffer  = int(await get_setting("meeting_post_slot_buffer_minutes") or "30")
         no_response_deadline = sent_at + timedelta(hours=no_response_hours)
 
-        name_match = re.search(r'^(.*?)\s*<[^>]+>$', to_raw)
-        client_display_name = name_match.group(1).strip() if name_match else to_raw
         proposal_id = await save_meeting_proposal(
             outgoing_message_id=compose_id,
             account=account,
@@ -613,35 +693,46 @@ async def api_compose_send(body: ComposeSendRequest):
             s_iso = raw["start"]
             e_iso = raw["end"]
             try:
-                s_dt = datetime.fromisoformat(s_iso)
                 e_dt = datetime.fromisoformat(e_iso)
             except ValueError:
                 continue
-
-            # Auto-release = earliest of (slot_end + buffer) and (sent + 36h)
             slot_deadline = e_dt.astimezone(timezone.utc) + timedelta(minutes=post_slot_buffer)
             auto_release  = min(slot_deadline, no_response_deadline).isoformat()
-
-            # Create owning event + mirrors in parallel
             own_id = fin_mirror = tax_mirror = ""
+
             if account == "financial":
-                own_id, tax_mirror = await asyncio.gather(
+                r = await asyncio.gather(
                     graph_create_hold("financial", s_iso, e_iso),
                     gmail_create_hold(s_iso, e_iso),
+                    return_exceptions=True,
                 )
+                if not isinstance(r[0], Exception): own_id    = r[0]
+                else: logger.warning(f"Financial hold failed: {r[0]}"); hold_failed = True
+                if not isinstance(r[1], Exception): tax_mirror = r[1]
+                else: logger.warning(f"Gmail hold failed: {r[1]}"); hold_failed = True
             elif account == "gmail":
-                tax_mirror, fin_mirror = await asyncio.gather(
+                r = await asyncio.gather(
                     gmail_create_hold(s_iso, e_iso),
                     graph_create_hold("financial", s_iso, e_iso),
+                    return_exceptions=True,
                 )
-                own_id = tax_mirror
-                tax_mirror = ""   # own_id IS the google event; fin_mirror is the M365 mirror
+                if not isinstance(r[0], Exception): own_id     = r[0]
+                else: logger.warning(f"Gmail hold failed: {r[0]}"); hold_failed = True
+                if not isinstance(r[1], Exception): fin_mirror = r[1]
+                else: logger.warning(f"Financial hold failed: {r[1]}"); hold_failed = True
             elif account == "personal":
-                own_id, fin_mirror, tax_mirror = await asyncio.gather(
+                r = await asyncio.gather(
                     graph_create_hold("personal", s_iso, e_iso),
                     graph_create_hold("financial", s_iso, e_iso),
                     gmail_create_hold(s_iso, e_iso),
+                    return_exceptions=True,
                 )
+                if not isinstance(r[0], Exception): own_id     = r[0]
+                else: logger.warning(f"Personal hold failed: {r[0]}"); hold_failed = True
+                if not isinstance(r[1], Exception): fin_mirror = r[1]
+                else: logger.warning(f"Financial hold failed: {r[1]}"); hold_failed = True
+                if not isinstance(r[2], Exception): tax_mirror = r[2]
+                else: logger.warning(f"Gmail hold failed: {r[2]}"); hold_failed = True
 
             await save_meeting_slot(
                 proposal_id=proposal_id,
@@ -659,6 +750,8 @@ async def api_compose_send(body: ComposeSendRequest):
     return JSONResponse({
         "ok": True,
         **({"proposal_id": proposal_id} if proposal_id else {}),
+        **({"join_url": join_url} if join_url else {}),
+        **({"hold_warning": True} if hold_failed else {}),
     })
 
 
@@ -746,12 +839,12 @@ async def api_meeting_confirm(proposal_id: int, slot_id: int):
 
     subject = proposal.get("subject", "Meeting")
 
-    # Create confirmed event in owning calendar
+    # Create confirmed event in owning calendar (with Teams/Meet)
     s_iso, e_iso = confirmed_slot["slot_start"], confirmed_slot["slot_end"]
     if account == "gmail":
-        event_id = await gmail_create_confirmed(s_iso, e_iso, subject, client_email, client_name)
+        event_id, join_url = await gmail_create_confirmed(s_iso, e_iso, subject, client_email, client_name)
     else:
-        event_id = await graph_create_confirmed(account, s_iso, e_iso, subject, client_email, client_name)
+        event_id, join_url = await graph_create_confirmed(account, s_iso, e_iso, subject, client_email, client_name)
 
     # Delete holds for all OTHER tentative slots
     other_slots = [s for s in slots if s["id"] != slot_id and s["status"] == "tentative"]
@@ -765,7 +858,71 @@ async def api_meeting_confirm(proposal_id: int, slot_id: int):
         await update_slot_status(s["id"], "declined")
     await update_proposal_status(proposal_id, "confirmed")
 
-    return JSONResponse({"ok": True, "event_id": event_id or None})
+    # Generate a confirmation email draft to send to the client
+    BRISBANE = ZoneInfo("Australia/Brisbane")
+    s_dt = datetime.fromisoformat(s_iso).astimezone(BRISBANE)
+    date_label = s_dt.strftime("%-d %B %Y")
+    time_label = s_dt.strftime("%I:%M %p").lstrip("0")
+    meeting_time_str = f"{s_dt.strftime('%A')} {date_label} at {time_label} Brisbane time"
+    meeting_label = "Google Meet" if account == "gmail" else "Teams"
+    draft_prompt = (
+        f"Write a brief meeting confirmation email to {client_name or client_email}. "
+        f"Confirm that '{subject}' is set for {meeting_time_str}. "
+        f"Say a calendar invite has been sent. "
+        + (f"Include this {meeting_label} link so they can join: {join_url}. " if join_url else "")
+        + "Keep it concise — 3 to 5 sentences."
+    )
+    draft_body = ""
+    try:
+        draft_body, _ = await generate_compose_draft(
+            account=account, to=client_email, subject=subject, prompt=draft_prompt,
+        )
+    except Exception:
+        pass
+
+    draft_to = f"{client_name} <{client_email}>" if client_name else client_email
+    prefix = "" if subject.lower().startswith("re:") else "Re: "
+    draft_subject = f"{prefix}{subject}"
+
+    return JSONResponse({
+        "ok": True,
+        "event_id": event_id or None,
+        "join_url": join_url or None,
+        "draft_body": draft_body or None,
+        "draft_to": draft_to,
+        "draft_subject": draft_subject,
+        "account": account,
+    })
+
+
+@app.post("/api/calendar/quick-hold")
+async def api_calendar_quick_hold(request: Request):
+    """
+    Create a tentative calendar hold with a Teams/Google Meet link (no attendees).
+    Called by the inbox scheduling panel when the user selects a proposed slot,
+    so the join URL can be embedded in the reply draft.
+    """
+    body    = await request.json()
+    account = body.get("account", "financial")
+    start   = body.get("start", "")
+    end     = body.get("end", "")
+    title   = body.get("title", "Hold")
+    if not start or not end:
+        return JSONResponse({"ok": False, "error": "start and end required"}, status_code=400)
+    try:
+        if account == "gmail":
+            event_id, join_url = await gmail_create_online_hold(start, end, title)
+        else:
+            event_id, join_url = await graph_create_online_hold(account, start, end, title)
+        return JSONResponse({"ok": True, "event_id": event_id or None, "join_url": join_url or None})
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+
+
+@app.get("/api/calendar/invites")
+async def api_calendar_invites():
+    """Return pending emails that have iCal data attached — shown in the Calendar tab."""
+    return JSONResponse(await get_pending_calendar_invites())
 
 
 @app.post("/api/meeting/{proposal_id}/decline-slot/{slot_id}")
@@ -818,6 +975,42 @@ async def api_meeting_decline(proposal_id: int):
 
     await update_proposal_status(proposal_id, "declined")
     return JSONResponse({"ok": True})
+
+
+def _check_proposed_slots(
+    proposed_slots: list,
+    busy_windows: list,
+    now: datetime,
+    biz_start_str: str,
+    biz_end_str: str,
+) -> list[dict]:
+    """Return proposed slots that are free, in the future, and within business hours."""
+    BRISBANE = ZoneInfo("Australia/Brisbane")
+    bsh, bsm = map(int, biz_start_str.split(":"))
+    beh, bem = map(int, biz_end_str.split(":"))
+    matched = []
+    for slot in proposed_slots:
+        try:
+            s = datetime.fromisoformat(slot["start"])
+            e = datetime.fromisoformat(slot["end"])
+        except (KeyError, ValueError, TypeError):
+            continue
+        if not s.tzinfo:
+            s = s.replace(tzinfo=BRISBANE)
+        if not e.tzinfo:
+            e = e.replace(tzinfo=BRISBANE)
+        if s <= now:
+            continue
+        s_bne = s.astimezone(BRISBANE)
+        e_bne = e.astimezone(BRISBANE)
+        bh_start = s_bne.replace(hour=bsh, minute=bsm, second=0, microsecond=0)
+        bh_end   = s_bne.replace(hour=beh, minute=bem, second=0, microsecond=0)
+        if s_bne < bh_start or e_bne > bh_end:
+            continue
+        if any(bs < e and be > s for bs, be in busy_windows):
+            continue
+        matched.append({"start": s.isoformat(), "end": e.isoformat()})
+    return matched
 
 
 def _find_free_slots(
@@ -973,22 +1166,24 @@ async def api_check_schedule(email_id: str):
     if not email:
         return JSONResponse({"is_scheduling": False})
 
+    BRISBANE = ZoneInfo("Australia/Brisbane")
+    now = datetime.now(BRISBANE)
+
     intent = await extract_scheduling_intent(
         subject=email["subject"] or "",
         sender=email["sender"] or "",
         body=email["body"] or "",
+        today=now.date().isoformat(),
     )
     if not intent.get("is_scheduling"):
         return JSONResponse({"is_scheduling": False})
 
     account = email["account"]
-    BRISBANE = ZoneInfo("Australia/Brisbane")
     biz_start  = await get_setting("meeting_hours_start")  or "09:00"
     biz_end    = await get_setting("meeting_hours_end")    or "17:00"
     buffer_min = int(await get_setting("meeting_buffer_minutes") or "15")
     duration   = int(await get_setting("meeting_default_duration") or "60")
 
-    now = datetime.now(BRISBANE)
     window_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     window_end   = window_start + timedelta(days=18)
 
@@ -1006,15 +1201,30 @@ async def api_check_schedule(email_id: str):
             busy.extend(batch)
     busy.sort(key=lambda x: x[0])
 
-    slots = _find_free_slots(busy, biz_start, biz_end, duration, buffer_min, num_slots=3)
+    matched_slots    = _check_proposed_slots(intent.get("proposed_slots", []), busy, now, biz_start, biz_end)
+    alternative_slots = _find_free_slots(busy, biz_start, biz_end, duration, buffer_min, num_slots=3)
 
     return JSONResponse({
         "is_scheduling": True,
         "proposed_times": intent.get("proposed_times", []),
         "topic": intent.get("topic", ""),
-        "free_slots": slots,
+        "matched_slots": matched_slots,
+        "free_slots": alternative_slots,
         "duration_minutes": duration,
     })
+
+
+@app.get("/api/email/{email_id}/event-details")
+async def api_event_details(email_id: str):
+    """Fetch structured calendar event data for a Graph eventMessage on demand."""
+    email = await get_email_by_id(email_id)
+    if not email or email["account"] not in ("financial", "personal"):
+        return JSONResponse({"ok": False, "error": "Not a Graph account email"}, status_code=404)
+    graph_id = email.get("graph_id") or email_id
+    event = await graph_get_message_event(email["account"], graph_id)
+    if not event:
+        return JSONResponse({"ok": False, "error": "No event data found"}, status_code=404)
+    return JSONResponse({"ok": True, "event": event})
 
 
 @app.post("/api/email/{email_id}/file")

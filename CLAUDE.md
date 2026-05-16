@@ -80,6 +80,8 @@ This runs on every poll for all three accounts.
 
 The personal account token is cached under `personal_app` in `tokens_graph.json`. If it gets a 403 after permission changes, delete that key to force fresh acquisition. `get_valid_token("personal")` calls `get_app_token()` instead of the standard refresh path.
 
+**Google Cloud Console**: The Gmail OAuth project must have **Google Calendar API** and **People API** enabled. After enabling, re-authorise Gmail in the dashboard to issue a fresh token with those scopes.
+
 ### Request flow for any action
 
 All action endpoints in `main.py` follow this pattern:
@@ -96,10 +98,14 @@ New email → Ollama llama3.1:8b (local) → classify_email()
            Skip LLM, use rule directly
 
 Draft generation → Claude claude-sonnet-4-6 (primary)
-                 → OpenAI gpt-4o (fallback on any exception)
+                 → OpenAI gpt-4o (fallback on any exception, with one retry)
 ```
 
+**Classifier prompt** distinguishes company/marketing event invitations (`newsletter`) from person-to-person scheduling (`calendar`). "You're invited!" from a bulk sender = `newsletter`, not `calendar`.
+
 `VOICE_PROFILE_BLOCK` in `agent/drafter.py` is a **module-level f-string** with `{{profile}}` (double braces). This is intentional — `{_AUTHOR_FIRST}` is interpolated at load time; `{{profile}}` becomes `{profile}` for `.format(profile=profile)` inside `_get_voice_block()` at call time. Do not change `{{profile}}` to `{profile}`.
+
+**Body sanitisation**: `_sanitize_body()` in `agent/drafter.py` strips zero-width spaces, soft hyphens, directional marks, and BOM characters before any body text reaches Claude. Applied in both `generate_draft()` and `extract_scheduling_intent()`.
 
 ### Context assembly for draft generation
 
@@ -111,13 +117,60 @@ Draft generation → Claude claude-sonnet-4-6 (primary)
 
 All four are fetched/assembled in `main.py:api_generate_draft()`. HubSpot and email history are gathered in parallel via `asyncio.gather()`. Failures in any context source are silent — never block draft generation.
 
+### Scheduling — inbox path (inbound: client proposes times)
+
+When a `calendar`-classified email is opened in the inbox, `checkSchedule()` calls `POST /api/email/{id}/check-schedule`. The backend:
+
+1. Calls `extract_scheduling_intent()` (Claude) — returns `proposed_slots` as ISO 8601 ranges
+2. Fetches busy windows from all three calendars in parallel
+3. Runs `_check_proposed_slots()` to find matching free times first
+4. Falls back to `_find_free_slots()` for alternatives
+
+The UI shows green "✓ You're free" matched slots and "Or propose a different time" alternatives.
+
+Clicking a slot sets `_pendingMeetingSlot` in JS (stores start/end/client). Clicking **Send** on the draft passes this to `POST /api/email/{id}/send` via `meeting_start`/`meeting_end` fields. After sending the reply, `api_send` calls `create_confirmed_event()` on the owning account — creating a Teams/Meet event with the client as attendee (calendar invite sent automatically).
+
+`_pendingMeetingSlot` is cleared on email selection change or after successful send.
+
+### Scheduling — compose path (outbound: user proposes times)
+
+Via the compose overlay, user can add 1–3 meeting time slots:
+
+- **1 slot** → `api_compose_send` calls `create_confirmed_event()` on the owning account (Teams/Meet, client as attendee) + tentative hold mirrors on the other calendars. Returns `join_url`. No `meeting_proposals` record created.
+- **2–3 slots** → tentative holds on all calendars + `meeting_proposals` + `meeting_slots` records for expiry/response tracking. When client responds, inbox classifies it as `meeting_response`.
+
+### Calendar tab — received invites
+
+The Calendar tab shows pending emails with real iCal attachments (`ical_data IS NOT NULL AND status = 'pending'` in `action_log`). Served by `GET /api/calendar/invites` → `get_pending_calendar_invites()` in `db/database.py`.
+
+Each invite shows organiser, event title, and date. Detail panel has **Accept**, **Decline**, and **Propose Alternative** buttons. Accept/Decline calls the existing `/api/email/{id}/calendar/accept|decline` endpoints (which also archive the email).
+
+### Calendar event creation — Teams and Google Meet
+
+`create_confirmed_event()` in both `connectors/graph.py` and `connectors/gmail.py` returns `tuple[str, str]` — `(event_id, join_url)`.
+
+- **Graph/M365**: payload includes `"isOnlineMeeting": True, "onlineMeetingProvider": "teamsForBusiness"`. Join URL comes from `data["onlineMeeting"]["joinUrl"]`.
+- **Gmail**: payload includes `conferenceData.createRequest` with `conferenceSolutionKey.type = "hangoutsMeet"` and `conferenceDataVersion=1` query param. Join URL is the first `video` entry in `conferenceData.entryPoints`.
+
+`create_online_hold()` exists in both connectors for creating a tentative hold with a Teams/Meet link but no attendees — currently only used by `POST /api/calendar/quick-hold`.
+
+### Mirror calendar strategy
+
+When creating calendar events, time is always blocked on all three calendars:
+
+| Owning account | Confirmed event (with client attendee) | Tentative mirrors |
+| --- | --- | --- |
+| `financial` | financial M365 calendar | Gmail/tax |
+| `gmail` | Gmail calendar | financial M365 |
+| `personal` | personal M365 calendar | financial M365 + Gmail |
+
 ### Sender rules
 
 Only manual rules exist (`source='manual'`). Rules are created by user reclassification via the UI. A rule at `count=1` is "pending" (no effect on classification). At `count≥2` it is "active" and bypasses Ollama entirely. Reclassifying to a different category resets count to 1.
 
 ### Auth error detection
 
-Each poller catches all exceptions, checks `str(e)` against `_AUTH_KEYWORDS` (in `agent/poller.py`), and calls `set_auth_error(account, message)` which writes to the `settings` table. The dashboard reads these via `GET /api/auth-errors` and shows a ⚠ triangle. The triangle clears automatically on the next successful poll.
+Each poller catches all exceptions, checks `str(e)` against `_AUTH_KEYWORDS` (in `agent/poller.py`), and calls `set_auth_error(account, message)` which writes to the `settings` table. The dashboard reads these via `GET /api/auth-errors` and shows a ⚠ triangle. The triangle clears automatically on the next successful poll. `invalid_grant`/`AADSTS700084` → "Session expired — click ⚠ to re-authorise".
 
 ### HubSpot CC / filing email
 
@@ -125,7 +178,7 @@ For the financial account, all outgoing email (replies via `api_send` and follow
 
 ### Single-page frontend
 
-`ui/templates/dashboard.html` is a self-contained SPA (~2,100 lines). All state lives in JS variables (`allEmails`, `currentEmail`, `currentMode`, etc.). No framework — vanilla JS with `fetch()`. The `showToast()` function is the only user feedback mechanism for async operations. Error strings come directly from `data.error` in API responses.
+`ui/templates/dashboard.html` is a self-contained SPA (~2,600 lines). All state lives in JS variables (`allEmails`, `currentEmail`, `currentMode`, `_pendingMeetingSlot`, `allInvites`, etc.). No framework — vanilla JS with `fetch()`. The `showToast()` function is the only user feedback mechanism for async operations. Error strings come directly from `data.error` in API responses.
 
 ## Key config locations
 

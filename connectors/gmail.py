@@ -576,7 +576,11 @@ async def get_busy_windows(start_dt: datetime, end_dt: datetime) -> list[tuple]:
                 params["pageToken"] = next_page
         return busy
     except Exception as e:
-        logger.debug(f"gmail get_busy_windows failed: {e}")
+        err = str(e)
+        if "403" in err or "Forbidden" in err:
+            logger.warning("Gmail Calendar API 403 — re-authorize Gmail in the dashboard to grant calendar access")
+        else:
+            logger.debug(f"gmail get_busy_windows failed: {e}")
         return []
 
 
@@ -610,12 +614,13 @@ async def create_calendar_hold(start_iso: str, end_iso: str, title: str = "Hold"
 
 
 async def create_confirmed_event(start_iso: str, end_iso: str,
-                                  title: str, client_email: str, client_name: str = "") -> str:
+                                  title: str, client_email: str, client_name: str = "") -> tuple[str, str]:
     """
-    Create a confirmed Google Calendar event with the client as attendee.
-    sendUpdates='all' causes Google to email the invite. Returns event id, or "" on failure.
+    Create a confirmed Google Calendar event with a Google Meet link and the client as attendee.
+    sendUpdates='all' causes Google to email the invite. Returns (event_id, meet_url), or ("", "") on failure.
     """
     try:
+        import uuid as _uuid
         token = await get_valid_token()
         s_dt  = datetime.fromisoformat(start_iso).astimezone(timezone.utc)
         e_dt  = datetime.fromisoformat(end_iso).astimezone(timezone.utc)
@@ -626,19 +631,77 @@ async def create_confirmed_event(start_iso: str, end_iso: str,
             "start": {"dateTime": s_dt.isoformat(), "timeZone": "UTC"},
             "end":   {"dateTime": e_dt.isoformat(), "timeZone": "UTC"},
             "attendees": [{"email": client_email, "displayName": client_name or client_email}],
+            "conferenceData": {
+                "createRequest": {
+                    "requestId": _uuid.uuid4().hex,
+                    "conferenceSolutionKey": {"type": "hangoutsMeet"},
+                }
+            },
         }
         async with httpx.AsyncClient(timeout=20.0) as client:
             resp = await client.post(
                 f"{CALENDAR_BASE}/calendars/primary/events",
                 headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
                 json=event,
-                params={"sendUpdates": "all"},
+                params={"sendUpdates": "all", "conferenceDataVersion": "1"},
             )
             resp.raise_for_status()
-            return resp.json().get("id", "")
+            data     = resp.json()
+            event_id = data.get("id", "")
+            join_url = ""
+            for ep in (data.get("conferenceData") or {}).get("entryPoints", []):
+                if ep.get("entryPointType") == "video":
+                    join_url = ep.get("uri", "")
+                    break
+            return event_id, join_url
     except Exception as e:
         logger.warning(f"gmail create_confirmed_event failed: {e}")
-        return ""
+        return "", ""
+
+
+async def create_online_hold(start_iso: str, end_iso: str, title: str = "Hold") -> tuple[str, str]:
+    """
+    Create a tentative Google Calendar hold with a Google Meet link (no attendees).
+    Used when proposing a specific time so the join URL can be included in the email.
+    Returns (event_id, meet_url), or ("", "") on failure.
+    """
+    try:
+        import uuid as _uuid
+        token = await get_valid_token()
+        s_dt  = datetime.fromisoformat(start_iso).astimezone(timezone.utc)
+        e_dt  = datetime.fromisoformat(end_iso).astimezone(timezone.utc)
+        event = {
+            "summary": title,
+            "status": "tentative",
+            "transparency": "opaque",
+            "start": {"dateTime": s_dt.isoformat(), "timeZone": "UTC"},
+            "end":   {"dateTime": e_dt.isoformat(), "timeZone": "UTC"},
+            "conferenceData": {
+                "createRequest": {
+                    "requestId": _uuid.uuid4().hex,
+                    "conferenceSolutionKey": {"type": "hangoutsMeet"},
+                }
+            },
+        }
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            resp = await client.post(
+                f"{CALENDAR_BASE}/calendars/primary/events",
+                headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+                json=event,
+                params={"conferenceDataVersion": "1"},
+            )
+            resp.raise_for_status()
+            data     = resp.json()
+            event_id = data.get("id", "")
+            join_url = ""
+            for ep in (data.get("conferenceData") or {}).get("entryPoints", []):
+                if ep.get("entryPointType") == "video":
+                    join_url = ep.get("uri", "")
+                    break
+            return event_id, join_url
+    except Exception as e:
+        logger.warning(f"gmail create_online_hold failed: {e}")
+        return "", ""
 
 
 async def delete_calendar_event(event_id: str) -> bool:

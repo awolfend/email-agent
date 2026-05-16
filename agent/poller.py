@@ -23,7 +23,8 @@ def _parse_gmail_date(date_str: str) -> str:
         dt = parsedate_to_datetime(date_str)
         return dt.isoformat()
     except Exception:
-        return None
+        from datetime import datetime, timezone
+        return datetime.now(timezone.utc).isoformat()
 
 
 def _normalize_graph_email(email: dict) -> dict:
@@ -152,7 +153,11 @@ async def _poll_account(account: str, fetch_fn, normalize_fn):
     except Exception as e:
         logger.error(f"Error polling {account} inbox: {e}")
         if any(k in str(e) for k in _AUTH_KEYWORDS):
-            await set_auth_error(account, str(e))
+            err_str = str(e)
+            if "invalid_grant" in err_str or "AADSTS700084" in err_str:
+                await set_auth_error(account, "Session expired — click ⚠ to re-authorise")
+            else:
+                await set_auth_error(account, err_str)
 
 
 async def poll_financial():

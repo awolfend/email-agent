@@ -8,11 +8,13 @@ OLLAMA_MODEL = "llama3.1:8b"
 CLASSIFICATION_PROMPT = """You are an email classification assistant. Classify the following email into exactly one of these categories:
 
 - spam: unsolicited bulk email, phishing, scams
-- newsletter: marketing emails, subscriptions, promotional content
+- newsletter: marketing emails, subscriptions, promotional content, company event invitations (webinars, briefings, product launches, online events)
 - notification: automated system notifications, receipts, confirmations
 - action_required: emails that need a reply or decision from the user
 - fyi: emails that are informational but need no response
-- calendar: meeting invites, scheduling requests
+- calendar: a direct meeting request or scheduling email from a real person — NOT company or marketing event invitations
+
+Key rule: "You're invited!" language from a company, bulk sender, no-reply address, or marketing system = newsletter or notification, NOT calendar. Use calendar only for genuine person-to-person scheduling where a human is asking to meet.
 
 Respond with JSON only. No explanation. Format:
 {{"classification": "<category>", "confidence": <0.0 to 1.0>, "reason": "<one sentence>"}}
