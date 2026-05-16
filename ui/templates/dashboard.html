@@ -2660,24 +2660,21 @@
 
         // Attach pending meeting slot if it belongs to this email
         const slot = (_pendingMeetingSlot?.email_id === doneId) ? _pendingMeetingSlot : null;
-
-        // If no slot was clicked, check whether the user filled in the meeting time bar manually
-        if (!slot) {
-            const startVal = document.getElementById('draft-meeting-start').value;
-            if (startVal) {
-                const durationMin = parseInt(document.getElementById('draft-meeting-duration').value, 10) || 60;
-                const startIso = _localToIso(startVal);
-                const endIso   = _localToIso(startVal, durationMin);
-                payload.meeting_start = startIso;
-                payload.meeting_end   = endIso;
-                payload.client_name   = extractNameFromSender(currentEmail.sender || '');
-            }
-        }
         const payload = { to, subject, body: draft };
+
         if (slot) {
             payload.meeting_start = slot.start;
             payload.meeting_end   = slot.end;
             payload.client_name   = slot.client_name || '';
+        } else {
+            // Fall back to the manually-entered meeting time bar
+            const startVal = document.getElementById('draft-meeting-start').value;
+            if (startVal) {
+                const durationMin = parseInt(document.getElementById('draft-meeting-duration').value, 10) || 60;
+                payload.meeting_start = _localToIso(startVal);
+                payload.meeting_end   = _localToIso(startVal, durationMin);
+                payload.client_name   = extractNameFromSender(currentEmail.sender || '');
+            }
         }
 
         showToast('⏳ Sending...');
