@@ -2831,11 +2831,11 @@
         showToast('✓ Accepting...');
         const res = await fetch(`/api/email/${doneId}/calendar/accept`, { method: 'POST' });
         const data = await res.json();
-        if (data.warning) {
-            showToast(`⚠️ Accepted (local only) — ${data.warning}`);
-        } else {
-            showToast('✓ Accepted — response sent to organiser');
+        if (!data.ok) {
+            showToast(`⚠️ Accept failed — ${data.error || 'unknown error'}`);
+            return;
         }
+        showToast('✓ Accepted — response sent to organiser');
         const email = allEmails.find(e => e.email_id === doneId);
         if (email) email.status = 'approved';
         selectNextEmail(doneId);
@@ -2849,11 +2849,11 @@
         showToast('✕ Declining...');
         const res = await fetch(`/api/email/${doneId}/calendar/decline`, { method: 'POST' });
         const data = await res.json();
-        if (data.warning) {
-            showToast(`⚠️ Declined (local only) — ${data.warning}`);
-        } else {
-            showToast('✕ Declined — response sent to organiser');
+        if (!data.ok) {
+            showToast(`⚠️ Decline failed — ${data.error || 'unknown error'}`);
+            return;
         }
+        showToast('✕ Declined — response sent to organiser');
         const email = allEmails.find(e => e.email_id === doneId);
         if (email) email.status = 'rejected';
         selectNextEmail(doneId);
