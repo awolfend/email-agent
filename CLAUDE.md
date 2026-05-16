@@ -162,7 +162,7 @@ When creating calendar events, time is always blocked on all three calendars:
 | --- | --- | --- |
 | `financial` | financial M365 calendar | Gmail/tax |
 | `gmail` | Gmail calendar | financial M365 |
-| `personal` | personal M365 calendar | financial M365 + Gmail |
+| `personal` | personal M365 calendar | **none** — personal is fully isolated |
 
 ### Sender rules
 

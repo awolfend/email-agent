@@ -609,7 +609,13 @@ async def create_calendar_hold(start_iso: str, end_iso: str, title: str = "Hold"
             resp.raise_for_status()
             return resp.json().get("id", "")
     except Exception as e:
-        logger.warning(f"gmail create_calendar_hold failed: {e}")
+        body_hint = ""
+        if hasattr(e, "response") and e.response is not None:
+            try:
+                body_hint = f" — {e.response.json()}"
+            except Exception:
+                body_hint = f" — {e.response.text[:200]}"
+        logger.warning(f"gmail create_calendar_hold failed: {e}{body_hint}")
         return ""
 
 
@@ -655,7 +661,13 @@ async def create_confirmed_event(start_iso: str, end_iso: str,
                     break
             return event_id, join_url
     except Exception as e:
-        logger.warning(f"gmail create_confirmed_event failed: {e}")
+        body_hint = ""
+        if hasattr(e, "response") and e.response is not None:
+            try:
+                body_hint = f" — {e.response.json()}"
+            except Exception:
+                body_hint = f" — {e.response.text[:200]}"
+        logger.warning(f"gmail create_confirmed_event failed: {e}{body_hint}")
         return "", ""
 
 

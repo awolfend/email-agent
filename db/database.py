@@ -246,8 +246,8 @@ async def mark_missing_as_archived(account: str, inbox_ids: set):
 
 async def get_queue(history_limit: int = 1000):
     priority = {
-        "action_required": 1, "calendar": 2, "fyi": 3,
-        "notification": 4, "newsletter": 5, "spam": 6, "unknown": 7, "error": 8
+        "meeting_response": 1, "action_required": 2, "calendar": 3, "fyi": 4,
+        "notification": 5, "newsletter": 6, "spam": 7, "unknown": 8, "error": 9
     }
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row

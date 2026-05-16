@@ -649,10 +649,13 @@ async def create_calendar_hold(account: str, start_iso: str, end_iso: str, title
 
 
 async def create_confirmed_event(account: str, start_iso: str, end_iso: str,
-                                  title: str, client_email: str, client_name: str = "") -> tuple[str, str]:
+                                  title: str, client_email: str, client_name: str = "",
+                                  online_meeting: bool = True) -> tuple[str, str]:
     """
-    Create a confirmed calendar event with a Teams meeting and the client as a required attendee.
-    Graph sends them an invite automatically. Returns (event_id, teams_join_url), or ("", "") on failure.
+    Create a confirmed calendar event with the client as a required attendee.
+    When online_meeting=True (default), adds a Teams link; set False for personal account
+    where a simple calendar event without a conferencing link is preferred.
+    Returns (event_id, join_url), or ("", "") on failure.
     """
     try:
         token = await get_valid_token(account)
@@ -667,9 +670,10 @@ async def create_confirmed_event(account: str, start_iso: str, end_iso: str,
             "start": {"dateTime": s_dt.strftime("%Y-%m-%dT%H:%M:%S"), "timeZone": "UTC"},
             "end":   {"dateTime": e_dt.strftime("%Y-%m-%dT%H:%M:%S"), "timeZone": "UTC"},
             "attendees": [attendee],
-            "isOnlineMeeting": True,
-            "onlineMeetingProvider": "teamsForBusiness",
         }
+        if online_meeting:
+            payload["isOnlineMeeting"] = True
+            payload["onlineMeetingProvider"] = "teamsForBusiness"
         async with httpx.AsyncClient(timeout=20.0) as client:
             resp = await client.post(
                 f"{base}/calendar/events",

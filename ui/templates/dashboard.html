@@ -1010,7 +1010,8 @@
             transition: opacity 0.15s;
         }
         .sched-slot-btn:hover { opacity: 0.82; }
-        .sched-slot-match { background: var(--green, #22c55e); }
+        .sched-slot-match    { background: var(--green, #22c55e); }
+        .sched-slot-conflict { background: var(--yellow, #f59e0b); }
         .sched-loading { font-size: 12px; color: var(--muted); }
 
         /* ---- Meeting response panel ---- */
@@ -1090,81 +1091,6 @@
         .confidence-bar { height: 3px; background: var(--border); border-radius: 2px; margin-top: 4px; overflow: hidden; }
         .confidence-fill { height: 100%; border-radius: 2px; background: var(--accent); }
         .generating { opacity: 0.6; font-style: italic; }
-
-        /* ---- Calendar mode ---- */
-        #calendar-mode-panel {
-            display: none;
-            flex: 1;
-            overflow-y: auto;
-            padding: 20px 24px;
-            flex-direction: column;
-            gap: 16px;
-        }
-        #calendar-mode-panel.show { display: flex; }
-        .cal-section-title {
-            font-size: 11px;
-            font-weight: 700;
-            color: var(--muted);
-            text-transform: uppercase;
-            letter-spacing: 0.07em;
-            padding-bottom: 6px;
-            border-bottom: 1px solid var(--border);
-        }
-        .proposal-item {
-            display: flex;
-            flex-direction: column;
-            gap: 5px;
-            padding: 12px 14px;
-            background: var(--surface2);
-            border: 1px solid var(--border);
-            border-left: 3px solid var(--purple);
-            border-radius: 7px;
-            cursor: pointer;
-            transition: background 0.12s;
-        }
-        .proposal-item:hover { background: var(--surface3); }
-        .proposal-item.selected { border-left-color: var(--accent); background: var(--surface3); }
-        .proposal-item-header { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
-        .proposal-client { font-size: 13px; font-weight: 600; color: var(--text); flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        .proposal-date { font-size: 11px; color: var(--muted); flex-shrink: 0; }
-        .proposal-subject { font-size: 12px; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        .proposal-footer { display: flex; align-items: center; gap: 8px; }
-        .proposal-status {
-            font-size: 10px;
-            font-weight: 700;
-            padding: 2px 7px;
-            border-radius: 10px;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-        }
-        .pstatus-pending   { background: rgba(245,158,11,0.15); color: var(--yellow); }
-        .pstatus-confirmed { background: rgba(34,197,94,0.15);  color: var(--green); }
-        .pstatus-declined  { background: rgba(239,68,68,0.15);  color: var(--red); }
-        .pstatus-expired   { background: rgba(107,114,128,0.15); color: var(--grey); }
-        .proposal-slots-count { font-size: 11px; color: var(--muted); }
-        .cal-empty { font-size: 13px; color: var(--muted); text-align: center; padding: 32px 0; }
-        .cal-proposal-detail {
-            background: var(--surface2);
-            border: 1px solid var(--border);
-            border-radius: 8px;
-            padding: 16px 18px;
-            display: flex;
-            flex-direction: column;
-            gap: 10px;
-        }
-        .cal-detail-title { font-size: 15px; font-weight: 700; color: var(--text); }
-        .cal-detail-meta { font-size: 12px; color: var(--text-dim); display: flex; flex-wrap: wrap; gap: 4px 16px; }
-        .cal-slot-row {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            padding: 7px 10px;
-            background: var(--surface);
-            border: 1px solid var(--border);
-            border-radius: 6px;
-        }
-        .cal-slot-time { flex: 1; font-size: 12px; color: var(--text); }
-        .cal-no-proposals { font-size: 13px; color: var(--muted); padding: 16px 0; }
 
         #settings-panel {
             display: none;
@@ -1485,7 +1411,6 @@
     <div class="mode-toggle">
         <button class="mode-btn active" id="mode-inbox" onclick="setMode('inbox')">📬 Inbox</button>
         <button class="mode-btn" id="mode-history" onclick="setMode('history')">🕐 History</button>
-        <button class="mode-btn" id="mode-calendar" onclick="setMode('calendar')">📅 Calendar</button>
         <button class="mode-btn" id="mode-settings" onclick="setMode('settings')">⚙</button>
     </div>
 
@@ -1571,10 +1496,6 @@
         </div>
     </div>
 
-    <div id="calendar-sidebar-section" style="display:none">
-        <div class="sidebar-section">Pending Invites <span class="stat-badge" id="pstat-pending">0</span></div>
-    </div>
-
     <div style="flex:1"></div>
     <div class="poll-btn" onclick="triggerPoll()">⟳ Poll Now</div>
     <div class="clear-btn" id="clear-btn" style="display:none;" onclick="confirmClearHistory()">🗑 Clear History</div>
@@ -1613,8 +1534,6 @@
         <div class="icon">📬</div>
         <p id="empty-msg">Select an email to review</p>
     </div>
-
-    <div id="calendar-mode-panel"></div>
 
     <div id="email-detail" style="display:none; flex-direction:column; flex:1; overflow:hidden; min-height:0;">
         <div id="detail-header">
@@ -2070,7 +1989,6 @@
         currentEmail = null;
 
         const isSettings = mode === 'settings';
-        const isCalendar = mode === 'calendar';
         document.getElementById('queue-panel').style.display = isSettings ? 'none' : '';
         document.getElementById('resizer-2').style.display = isSettings ? 'none' : '';
         document.getElementById('detail-panel').style.display = isSettings ? 'none' : 'flex';
@@ -2078,43 +1996,34 @@
 
         document.getElementById('mode-inbox').classList.toggle('active', mode === 'inbox');
         document.getElementById('mode-history').classList.toggle('active', mode === 'history');
-        document.getElementById('mode-calendar').classList.toggle('active', mode === 'calendar');
         document.getElementById('mode-settings').classList.toggle('active', mode === 'settings');
 
         if (!isSettings) {
-            document.getElementById('empty-state').style.display = isCalendar ? 'none' : 'flex';
+            document.getElementById('empty-state').style.display = 'flex';
             document.getElementById('email-detail').style.display = 'none';
-            document.getElementById('calendar-mode-panel').classList.toggle('show', isCalendar);
             document.getElementById('empty-msg').textContent = 'Select an email to review';
             document.getElementById('inbox-sidebar-section').style.display = mode === 'inbox' ? '' : 'none';
             document.getElementById('history-sidebar-section').style.display = mode === 'history' ? '' : 'none';
-            document.getElementById('calendar-sidebar-section').style.display = isCalendar ? '' : 'none';
             document.getElementById('history-tabs').style.display = mode === 'history' ? 'flex' : 'none';
             document.getElementById('clear-btn').style.display = mode === 'history' ? '' : 'none';
             document.getElementById('queue-title').textContent =
-                mode === 'inbox' ? 'Inbox' : mode === 'history' ? 'History' : 'Calendar';
+                mode === 'inbox' ? 'Inbox' : 'History';
             if (mode === 'history') {
                 currentHistoryClassFilter = 'all';
                 document.querySelectorAll('.stat-row[id^="hfilter-"]').forEach(r => r.classList.remove('active'));
                 const hAll = document.getElementById('hfilter-all');
                 if (hAll) hAll.classList.add('active');
             }
-            if (isCalendar) {
-                document.getElementById('queue-list').innerHTML = '';
-                loadCalendarMode();
+            renderQueue();
+            if (mode === 'history') {
+                updateHistoryCounts();
             } else {
-                renderQueue();
-                if (mode === 'history') {
-                    updateHistoryCounts();
-                } else {
-                    updateClassificationCounts();
-                    updateAccountCounts();
-                }
+                updateClassificationCounts();
+                updateAccountCounts();
             }
         } else {
             document.getElementById('inbox-sidebar-section').style.display = 'none';
             document.getElementById('history-sidebar-section').style.display = 'none';
-            document.getElementById('calendar-sidebar-section').style.display = 'none';
             document.getElementById('clear-btn').style.display = 'none';
             loadVoiceStatus();
             loadSettings();
@@ -2215,16 +2124,6 @@
     }
 
     function updateAccountCounts() {
-        if (currentMode === 'calendar') {
-            const acct = { financial: 0, gmail: 0, personal: 0 };
-            allInvites.forEach(inv => { if (acct[inv.account] !== undefined) acct[inv.account]++; });
-            document.getElementById('pstat-pending').textContent  = allInvites.length;
-            document.getElementById('stat-acct-all').textContent  = allInvites.length;
-            document.getElementById('stat-financial').textContent = acct.financial;
-            document.getElementById('stat-gmail').textContent     = acct.gmail;
-            document.getElementById('stat-personal').textContent  = acct.personal;
-            return;
-        }
         let base = allEmails;
         if (currentMode === 'inbox') {
             base = base.filter(e => e.status === 'pending');
@@ -2677,6 +2576,8 @@
             }
         }
 
+        const _bar = document.getElementById('draft-meeting-bar');
+        const _barVal = document.getElementById('draft-meeting-start').value;
         showToast('⏳ Sending...');
         try {
             const res = await fetch(`/api/email/${doneId}/send`, {
@@ -3193,138 +3094,6 @@
         await loadQueue();
     }
 
-    // ---- Calendar mode ----
-
-    let allInvites      = [];
-    let selectedInviteId = null;
-
-    async function loadCalendarMode() {
-        try {
-            const res = await fetch('/api/calendar/invites');
-            allInvites = await res.json();
-        } catch(e) {
-            allInvites = [];
-        }
-        // Update sidebar counts
-        const acct = { financial: 0, gmail: 0, personal: 0 };
-        allInvites.forEach(inv => { if (acct[inv.account] !== undefined) acct[inv.account]++; });
-        document.getElementById('pstat-pending').textContent   = allInvites.length;
-        document.getElementById('stat-financial').textContent  = acct.financial;
-        document.getElementById('stat-gmail').textContent      = acct.gmail;
-        document.getElementById('stat-personal').textContent   = acct.personal;
-        document.getElementById('stat-acct-all').textContent   = allInvites.length;
-        renderInviteQueue();
-        renderInviteDetail(null);
-    }
-
-    function renderInviteQueue() {
-        const list = document.getElementById('queue-list');
-        if (!allInvites.length) {
-            list.innerHTML = `<div style="padding:24px 16px;font-size:13px;color:var(--muted)">No pending calendar invites.</div>`;
-            return;
-        }
-        list.innerHTML = allInvites.map(inv => {
-            const sel = selectedInviteId === inv.email_id ? 'selected' : '';
-            const ev  = inv.ical_event || {};
-            const when = ev.start
-                ? new Date(ev.start).toLocaleDateString('en-AU', { weekday:'short', day:'numeric', month:'short' })
-                : (inv.received_at ? new Date(inv.received_at).toLocaleDateString('en-AU', { day:'numeric', month:'short' }) : '');
-            const organizer = ev.organizer || inv.sender || '';
-            return `
-            <div class="email-item ${sel}" onclick="selectInvite(${JSON.stringify(inv.email_id).replace(/"/g,'&quot;')})">
-                <div class="email-item-top">
-                    <span class="email-sender">${escHtml(organizer)}</span>
-                    <span class="email-time">${escHtml(when)}</span>
-                </div>
-                <div class="email-subject">${escHtml(ev.summary || inv.subject || '(no title)')}</div>
-                <div class="email-meta"><span style="font-size:11px;color:var(--muted)">${inv.account}</span></div>
-            </div>`;
-        }).join('');
-    }
-
-    function selectInvite(emailId) {
-        selectedInviteId = emailId;
-        renderInviteQueue();
-        const invite = allInvites.find(i => i.email_id === emailId);
-        renderInviteDetail(invite);
-        if (isMobile()) applyMobilePanelState('detail');
-    }
-
-    function renderInviteDetail(invite) {
-        const panel = document.getElementById('calendar-mode-panel');
-        if (!invite) {
-            panel.innerHTML = `<div class="cal-empty">Select an invite to view details.</div>`;
-            return;
-        }
-        const ev = invite.ical_event || {};
-        const fmtDt = iso => {
-            if (!iso) return '—';
-            try { return new Date(iso).toLocaleString('en-AU', { weekday:'long', day:'numeric', month:'long', year:'numeric', hour:'numeric', minute:'2-digit', hour12:true }); }
-            catch(e) { return iso; }
-        };
-        const rows = [];
-        if (ev.start) rows.push(`<div class="cal-detail-row"><span class="ci-meta-label">When</span> ${escHtml(fmtDt(ev.start))}${ev.end ? ' – ' + escHtml(fmtDt(ev.end)) : ''}</div>`);
-        if (ev.organizer) rows.push(`<div class="cal-detail-row"><span class="ci-meta-label">From</span> ${escHtml(ev.organizer)}</div>`);
-        if (ev.location)  rows.push(`<div class="cal-detail-row"><span class="ci-meta-label">Where</span> ${escHtml(ev.location)}</div>`);
-        const acctLabels = { financial: '💼 Financial', gmail: '📧 Tax', personal: '🏠 Personal' };
-        rows.push(`<div class="cal-detail-row"><span class="ci-meta-label">Account</span> ${acctLabels[invite.account] || invite.account}</div>`);
-
-        const emailIdAttr = escHtml(invite.email_id);
-        panel.innerHTML = `
-        <div class="cal-proposal-detail">
-            <div class="cal-detail-title">${escHtml(ev.summary || invite.subject || '(no title)')}</div>
-            <div class="cal-detail-meta" style="flex-direction:column;gap:4px;margin-bottom:12px;">${rows.join('')}</div>
-            <div style="display:flex;gap:8px;flex-wrap:wrap;">
-                <button class="mr-confirm-btn" onclick="calAcceptInvite('${emailIdAttr}','${invite.account}')">✓ Accept</button>
-                <button class="mr-decline-slot-btn" style="padding:6px 14px;" onclick="calDeclineInvite('${emailIdAttr}','${invite.account}')">✕ Decline</button>
-                <button class="mr-decline-slot-btn" style="padding:6px 14px;" onclick="calProposeAlternative('${emailIdAttr}','${invite.account}','${escAttr(ev.organizer||'')}','${escAttr(invite.subject||'')}')">↩ Propose Alternative</button>
-            </div>
-        </div>`;
-    }
-
-    async function calAcceptInvite(emailId, account) {
-        showToast('✓ Accepting…');
-        const res  = await fetch(`/api/email/${encodeURIComponent(emailId)}/calendar/accept`, { method: 'POST' });
-        const data = await res.json();
-        if (data.ok) {
-            showToast('✓ Accepted — response sent to organiser');
-            allInvites = allInvites.filter(i => i.email_id !== emailId);
-            selectedInviteId = null;
-            renderInviteQueue();
-            renderInviteDetail(null);
-            updateAccountCounts();
-        } else {
-            showToast(`Accept failed: ${data.error || 'unknown'}`);
-        }
-    }
-
-    async function calDeclineInvite(emailId, account) {
-        showToast('✕ Declining…');
-        const res  = await fetch(`/api/email/${encodeURIComponent(emailId)}/calendar/decline`, { method: 'POST' });
-        const data = await res.json();
-        if (data.ok) {
-            showToast('✕ Declined — response sent to organiser');
-            allInvites = allInvites.filter(i => i.email_id !== emailId);
-            selectedInviteId = null;
-            renderInviteQueue();
-            renderInviteDetail(null);
-            updateAccountCounts();
-        } else {
-            showToast(`Decline failed: ${data.error || 'unknown'}`);
-        }
-    }
-
-    function calProposeAlternative(emailId, account, organizer, subject) {
-        openCompose(account);
-        setTimeout(() => {
-            document.getElementById('compose-to').value      = organizer;
-            document.getElementById('compose-subject').value = `Re: ${subject}`;
-            document.getElementById('compose-prompt').value  = 'Propose alternative meeting times';
-            detectMeetingIntent();
-            composeDraftAutoSave();
-        }, 50);
-    }
-
     // ---- Meeting response panel ----
 
     let currentMeetingProposalId = null;
@@ -3401,21 +3170,30 @@
             if (data.topic) {
                 html += `<div class="sched-topic">${escHtml(data.topic)}</div>`;
             }
-            if (data.proposed_times && data.proposed_times.length) {
-                html += `<div class="sched-label">They propose</div>`;
-                html += `<div class="sched-proposed">${data.proposed_times.map(t => escHtml(t)).join(' &bull; ')}</div>`;
-            }
-            if (data.matched_slots && data.matched_slots.length) {
-                html += `<div class="sched-label">✓ You're free — click to confirm</div>`;
+
+            // Sender's proposed times — rendered as green (free) or amber (conflict) buttons
+            const proposedSlots = data.proposed_slot_results || [];
+            if (proposedSlots.length) {
+                html += `<div class="sched-label">They propose — click to confirm</div>`;
                 html += `<div class="sched-slots">`;
-                for (const slot of data.matched_slots) {
+                let autoFilled = false;
+                for (const slot of proposedSlots) {
+                    const cls     = slot.free ? 'sched-slot-match' : 'sched-slot-conflict';
+                    const title   = slot.free ? '' : ' title="You have a conflict at this time"';
                     const slotJson = JSON.stringify(slot).replace(/"/g, '&quot;');
-                    html += `<button class="sched-slot-btn sched-slot-match" onclick="_confirmSlot(${slotJson}, ${timesJson})">${escHtml(_formatSlotLabel(slot.start, slot.end))}</button>`;
+                    html += `<button class="sched-slot-btn ${cls}"${title} onclick="_confirmSlot(${slotJson}, ${timesJson})">${escHtml(_formatSlotLabel(slot.start, slot.end))}</button>`;
+                    if (slot.free && !autoFilled) {
+                        autoFilled = true;
+                        // Auto-fill the meeting bar with the first free proposed slot
+                        setTimeout(() => _confirmSlot(slot, data.proposed_times || []), 0);
+                    }
                 }
                 html += `</div>`;
             }
+
+            // System-suggested free slots (alternatives)
             if (data.free_slots && data.free_slots.length) {
-                const altLabel = (data.matched_slots && data.matched_slots.length)
+                const altLabel = proposedSlots.length
                     ? 'Or propose a different time'
                     : `Your next available (${data.duration_minutes} min)`;
                 html += `<div class="sched-label">${altLabel}</div>`;
@@ -3478,7 +3256,10 @@
             document.getElementById('draft-section').style.display = 'flex';
             document.getElementById('resizer-v').style.display = 'block';
         }
-        generateDraft();
+        const existingDraft = (document.getElementById('draft-textarea')?.value || '').trim();
+        if (!existingDraft) {
+            generateDraft();
+        }
     }
 
     function extractNameFromSender(sender) {
